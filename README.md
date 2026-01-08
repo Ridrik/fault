@@ -1,6 +1,6 @@
 # libfault
 
-libfault is a lightweight, cross-platform crash reporting and panic library for C++17. It provides a unified interface for saving object traces when things go wrong, whether it's a segmentation fault on Linux, an unhandled exception on Windows, a std::terminate or a manual panic/assertion call in your logic.
+libfault is a lightweight, cross-platform crash reporting and panic library for C++20. It provides a unified interface for saving object traces when things go wrong, whether it's a segmentation fault on Linux, an unhandled exception on Windows, a std::terminate or a manual panic/assertion call in your logic.
 
 ## Description
 
@@ -52,31 +52,47 @@ target_link_libraries(my_app PRIVATE fault::fault)
 ### 2. Basic usage
 Initialize the global handlers at the start of your `main()` function.
 ```
-#include <fault/fault.hpp>
+#include <format>
 #include <iostream>
+#include <stdexcept>
+
+#include <fault/fault.hpp>
+
+void foo() {
+    try {
+        throw std::runtime_error("Runtime error");
+    } catch (const std::exception& e) {
+        fault::panic(std::format("Error in foo: {}", e.what()));
+    }
+}
+
+void dereferencePtr() {
+    volatile int* p{nullptr};
+    *p = 42;
+}
 
 int main() {
     // Initialize global crash handlers (Signals, SEH, and Terminate)
-    if (!fault::init({.appName = "MyApp",
-                      .buildID = "MyBuildID",
-                      .crashDir = "crash"})) {
+    if (!fault::init({.appName = "MyApp", .buildID = "MyBuildID", .crashDir = "crash"})) {
         std::cerr << "Failed to initialize libfault.\n";
         return EXIT_FAILURE;
     }
 
-    // Example: Manual Panic
-    if (system_in_bad_state) {
-        fault::panic("Critical system failure: logic inconsistency detected");
-    }
+    // Segmentation fault
+    dereferencePtr();
 
-    // Example: Debug Asserts
-    DFAULT_ASSERT(data_ptr != nullptr, "Input data pointer is null");
+    // User panic
+    foo();
 
-    // Example: access violation
-    volatile int* p{nullptr};
-    *p = 42;
+    volatile int* data_ptr{nullptr};
+    // Example: Debug only Asserts
+    FAULT_ASSERT(data_ptr != nullptr, "Input data pointer is null");
+    // Invariant expect, with source location info
+    FAULT_EXPECT(data_ptr != nullptr);
+    fault::expect(data_ptr != nullptr, "Input data pointer is null");
 
-    return 0;
+    // Or, without location info
+    fault::verify(data_ptr != nullptr);
 }
 ```
 ---

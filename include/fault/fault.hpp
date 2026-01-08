@@ -48,6 +48,8 @@ Terminate Handling
 #ifndef FAULT_HPP
 #define FAULT_HPP
 
+#include "fault/attributes.h"
+#include "fault/fault.h"
 #include "fault/fault_export.h"
 
 #include <cstdint>
@@ -153,35 +155,29 @@ FAULT_EXPORT bool setShutdownRequest() noexcept;
 
 // Assertion Handler. Similar to panic, but using general configuration parameters, and with
 // metadata information
-[[noreturn]] FAULT_EXPORT void assertionFailure(std::string_view expr, std::string_view file,
-                                                std::uint32_t line, std::string_view func,
-                                                std::string_view userMsg = {});
+[[noreturn]] FAULT_EXPORT void assertionFailure(
+    std::string_view expr, std::source_location loc = std::source_location::current(),
+    std::string_view userMsg = {});
 
-[[noreturn]] FAULT_EXPORT void assertionFailure(std::string_view expr, std::source_location loc,
-                                                std::string_view userMsg = {});
+// Verify invariant (including release), with no metadata
+inline void verify(bool cond, std::string_view userMsg = {}) {
+    if (!cond) [[unlikely]] {
+        panic(userMsg);
+        FAULT_UNREACHABLE();
+    }
+}
 
-// NOLINTBEGIN
-#define FAULT_ASSERT(condition, ...)                                                          \
-    do {                                                                                      \
-        if (!(condition)) [[unlikely]] {                                                      \
-            fault::assertionFailure(#condition, __FILE__, __LINE__, __func__, ##__VA_ARGS__); \
-        }                                                                                     \
-    } while (0)
+// Verify invariant (including release), with location metadata
+inline void expect(bool cond, std::string_view userMsg = {},
+                   std::source_location loc = std::source_location::current()) {
+    if (!cond) [[unlikely]] {
+        assertionFailure("?", loc, userMsg);
+        FAULT_UNREACHABLE();
+    }
+}
 
-#define FAULT_ASSERT2(condition, ...)                                                            \
-    do {                                                                                         \
-        if (!(condition)) [[unlikely]] {                                                         \
-            fault::assertionFailure(#condition, std::source_location::current(), ##__VA_ARGS__); \
-        }                                                                                        \
-    } while (0)
-
-#ifdef NDEBUG
-#define DFAULT_ASSERT(cond, ...) ((void)0)
-#else
-#define DFAULT_ASSERT(cond, ...) FAULT_ASSERT(cond, ##__VA_ARGS__)
-#endif
-
-// NOLINTEND
+#define FAULT_EXPECT_IMPL(cond, ...) \
+    ::fault::assertionFailure(#cond, std::source_location::current(), ##__VA_ARGS__)
 
 }  // namespace fault
 

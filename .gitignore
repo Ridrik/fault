@@ -1,6 +1,7 @@
 build
 .cache
 .vscode
+crash
 install
 **_tmp**
 compile_commands.json

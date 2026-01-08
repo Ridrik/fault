@@ -27,7 +27,7 @@ target_include_directories(fault PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
-target_compile_features(fault PUBLIC cxx_std_23)
+target_compile_features(fault PUBLIC cxx_std_20)
 
 set_target_properties(fault PROPERTIES
     CXX_VISIBILITY_PRESET hidden
@@ -55,4 +55,5 @@ generate_export_header(fault BASE_NAME FAULT EXPORT_FILE_NAME include/fault/faul
 
 if(PROJECT_IS_TOP_LEVEL)
     include(cmake/install.cmake)
+    add_subdirectory(tests)
 endif()

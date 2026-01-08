@@ -16,6 +16,7 @@
 #include <iostream>
 #include <iterator>
 #include <pthread.h>
+#include <source_location>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -59,6 +60,13 @@ static_assert(std::atomic<int>::is_always_lock_free,
 #define FORCE_INLINE inline __attribute__((always_inline))
 
 namespace utils {
+
+inline std::string_view getSafeView(const char* ptr) noexcept {
+    if (ptr == nullptr) {
+        return "";
+    }
+    return std::string_view{ptr};
+}
 
 ObjectTrace fromCppTrace(const cpptrace::object_trace& cppTrace) {
     ObjectTrace trace;
@@ -290,7 +298,7 @@ void safePrint(const cpptrace::safe_object_frame& frame,
     safePrint(&frame.object_path[0], fd);
 }
 
-constexpr std::size_t strSafeCopy(char* dest, std::size_t maxLen, std::string_view src) {
+inline std::size_t strSafeCopy(char* dest, std::size_t maxLen, std::string_view src) {
     const auto baseLen = std::min(maxLen - 1, src.size());
     std::memcpy(dest, src.data(), baseLen);
     dest[baseLen] = '\0';
@@ -364,17 +372,14 @@ struct RawTime {
 } gInitTimeRaw;  // NOLINT
 
 std::tm timeInit() {
-    auto now = std::chrono::system_clock::now();
-    auto duration = now.time_since_epoch();
-
-    // 1. Store Raw for Uptime (Seconds + Nanoseconds)
-    auto secs = std::chrono::duration_cast<std::chrono::seconds>(duration);
+    const auto now = std::chrono::system_clock::now();
+    const auto duration = now.time_since_epoch();
+    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(duration);
     gInitTimeRaw.tvSec = secs.count();
     gInitTimeRaw.tvNsec = static_cast<long>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(duration - secs).count());
 
-    // 2. Format String for the report header
-    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    const std::time_t t = std::chrono::system_clock::to_time_t(now);
     std::tm tmInfo{};
 #ifdef _WIN32
     gmtime_s(&tmInfo, &t);
@@ -426,7 +431,7 @@ struct Config {
         utils::strSafeCopy(appName.data(), appName.size(), config.appName);
         utils::strSafeCopy(buildID.data(), buildID.size(), config.buildID);
         const auto fileNameStr =
-            config.reportFileName.empty() ? "crash_report.raw" : config.reportFileName;
+            config.reportFileName.empty() ? "crash_report.log" : config.reportFileName;
         const auto tmInfo = timeInit();
         const auto reportDirFlags = utils::setCrashWriteDir(config.crashDir, fileNameStr, crashPath,
                                                             config.prefixDateOnFilename, tmInfo);
@@ -459,10 +464,6 @@ namespace ExitHandler {
 static_assert(std::atomic<bool>::is_always_lock_free,
               "std::atomic<bool> is not guaranteed to be async signal safe.");
 
-// std::atomic<bool> useUnsafeStacktraceOnSignalFallback{false};  // NOLINT
-// std::array<char, 512> crashPath{"crash_report.raw"};           // NOLINT
-// std::atomic<int> crashPathState{0};                            // NOLINT
-
 #if defined(__linux__)
 std::array<char, 256> zenityPath{"/usr/bin/zenity"};    // NOLINT
 std::atomic<int> canReadZenityPath{1};                  // NOLINT
@@ -476,7 +477,7 @@ std::atomic<int> canReadKDialogPath{1};                 // NOLINT
 #else
     std::_Exit(code);
 #endif
-    std::unreachable();
+    FAULT_UNREACHABLE();
 }
 
 [[noreturn]] inline void parkThreadForever() noexcept {
@@ -489,24 +490,15 @@ std::atomic<int> canReadKDialogPath{1};                 // NOLINT
 #endif
     // Safety net in case Pause/Sleep returns
     ExitHandler::shutdown();
-    std::unreachable();
+    FAULT_UNREACHABLE();
 }
-
-/*void acquireExitProcedureOrPark() noexcept {
-    static std::atomic<bool> hasBeenHandled{false};
-    bool expected{false};
-    if (!hasBeenHandled.compare_exchange_strong(expected, true)) {
-        parkThreadForever();
-        std::unreachable();
-    }
-}*/
 
 void writeToStdErr(std::string_view message) {
     static std::atomic<bool> hasBeenHandled{false};
     bool expected{false};
     if (!hasBeenHandled.compare_exchange_strong(expected, true)) {
         parkThreadForever();
-        std::unreachable();
+        FAULT_UNREACHABLE();
     }
     utils::safePrint(message.data(), message.size());
 }
@@ -518,7 +510,7 @@ bool writeReport(std::string_view errContext,
     bool expected{false};
     if (!hasBeenHandled.compare_exchange_strong(expected, true)) {
         parkThreadForever();
-        std::unreachable();
+        FAULT_UNREACHABLE();
     }
     const auto& config = _internal::config;
     if (!config.isReportWritable) {
@@ -616,12 +608,11 @@ bool writeReport(std::string_view errContext,
 }
 
 void showPopUp(const char* title, const char* message) noexcept {
-    std::cerr << "here\n";
     static std::atomic<bool> hasBeenHandled{false};
     bool expected{false};
     if (!hasBeenHandled.compare_exchange_strong(expected, true)) {
         ExitHandler::parkThreadForever();
-        std::unreachable();
+        FAULT_UNREACHABLE();
     }
 #ifdef _WIN32
     std::array<wchar_t, 128> titleWide{};
@@ -644,7 +635,7 @@ void showPopUp(const char* title, const char* message) noexcept {
                   nullptr);
         }
         ExitHandler::shutdown(EXIT_FAILURE);
-        std::unreachable();
+        FAULT_UNREACHABLE();
     } else if (pid > 0) {
         waitpid(pid, nullptr, 0);  // Wait for user to close box
     }
@@ -730,7 +721,7 @@ const char* getExceptionString(DWORD code) noexcept {
 
 struct WindowsHandling {
    private:
-    static inline std::array<char, 64> titleBuffer{};
+    static inline std::array<char, 128> titleBuffer{};
     static inline std::array<char, 1024> finalBuffer{};
     static inline std::size_t offsetForMsg{0};
     static inline std::atomic<bool> hasAnyCodeBeenReceived{false};
@@ -760,7 +751,7 @@ struct WindowsHandling {
             }
         }
         ExitHandler::shutdown();
-        std::unreachable();
+        FAULT_UNREACHABLE();
     }
 
     [[nodiscard]] static bool checkPermissions() noexcept {
@@ -769,9 +760,8 @@ struct WindowsHandling {
             if (WindowsHandling::tryCount ==
                 0) {  // New thread on regular execution triggered handler, have it wait
                 // for process shutdown
-                std::cerr << "parking!\n";
                 ExitHandler::parkThreadForever();
-                std::unreachable();
+                FAULT_UNREACHABLE();
             }
             // Same thread that was working on the report triggered handler again, skip report and
             // go to popup + shutdown
@@ -906,7 +896,7 @@ struct WindowsHandling {
             kNoContextPtr, kAbortCode,
             "Abort called");  // trace, stdcerr error, gui popup
         ExitHandler::shutdown(kAbortCode);
-        std::unreachable();
+        FAULT_UNREACHABLE();
     }
 
     static LONG WINAPI windowsExceptionHandler(PEXCEPTION_POINTERS exceptionInfo) {
@@ -939,7 +929,7 @@ struct WindowsHandling {
         bool resolveTrace) {
         if (!WindowsHandling::checkPermissions()) {
             ExitHandler::shutdown(code);
-            std::unreachable();
+            FAULT_UNREACHABLE();
         }
         WindowsHandling::showPopUp = showPopUp;
         std::size_t offset{0};
@@ -948,7 +938,7 @@ struct WindowsHandling {
         WindowsHandling::commonActions(offset, printToStderr, writeReport, exceptionTrace,
                                        resolveTrace);
         ExitHandler::shutdown(code);
-        std::unreachable();
+        FAULT_UNREACHABLE();
     }
 
     static void setup(bool enableHandlers) noexcept {
@@ -1021,7 +1011,7 @@ inline const char* safePrintSiCode(int sig, int code) noexcept {
         default:
             return "SIGNAL_UNKNOWN";
     }
-    std::unreachable();
+    FAULT_UNREACHABLE();
 }
 
 void safeAppendRegisters(const ucontext_t* ctx, char* buffer, std::size_t& offset,
@@ -1137,7 +1127,7 @@ struct LinuxHandling {
     static inline stack_t gAltstack{};
 
    private:
-    static inline std::array<char, 64> titleBuffer{};
+    static inline std::array<char, 128> titleBuffer{};
     static inline std::array<char, 2048> finalBuffer{};
     static inline std::size_t offsetForMsg{0};
     static inline std::atomic<pid_t> tracePid{-1};
@@ -1161,7 +1151,7 @@ struct LinuxHandling {
         pthread_sigmask(SIG_UNBLOCK, &set, nullptr);
         std::raise(sig);
         ExitHandler::shutdown(sig);
-        std::unreachable();
+        FAULT_UNREACHABLE();
     }
 
     [[noreturn]] static void popUpAndExit([[maybe_unused]] int sig = -1) noexcept {
@@ -1178,20 +1168,20 @@ struct LinuxHandling {
             }
             if (LinuxHandling::shouldReRaiseSignal) {
                 LinuxHandling::reRaiseSignal(LinuxHandling::signal);
-                std::unreachable();
+                FAULT_UNREACHABLE();
             }
             ExitHandler::shutdown(128 + LinuxHandling::signal);
-            std::unreachable();
+            FAULT_UNREACHABLE();
         }
         if (LinuxHandling::showPopUp) {
             ExitHandler::showPopUp("Fatal Error", _internal::config.baseErrorMessage.data());
         }
         if (LinuxHandling::shouldReRaiseSignal) {
             LinuxHandling::reRaiseSignal(LinuxHandling::signal);
-            std::unreachable();
+            FAULT_UNREACHABLE();
         }
         ExitHandler::shutdown(128 + LinuxHandling::signal);
-        std::unreachable();
+        FAULT_UNREACHABLE();
     };
 
     static void writeSummaryMessageToBuffer(std::string_view description,
@@ -1319,14 +1309,14 @@ struct LinuxHandling {
             ExitHandler::writeToStdErr(std::string_view{stdErrBfr.data(), offset});
         }
         ExitHandler::shutdown();
-        std::unreachable();
+        FAULT_UNREACHABLE();
     }
 
     static void checkPermissions() noexcept {
         if (LinuxHandling::tracePid ==
             0) {  // Child that got hit with new signal during trace collection
             ExitHandler::shutdown();
-            std::unreachable();
+            FAULT_UNREACHABLE();
         }
         bool expected{false};
         if (!LinuxHandling::hasAnySignalBeenReceived.compare_exchange_strong(expected, true)) {
@@ -1334,12 +1324,12 @@ struct LinuxHandling {
                 0) {  // New thread on regular execution triggered handler, have it wait
                 // for process shutdown
                 ExitHandler::parkThreadForever();
-                std::unreachable();
+                FAULT_UNREACHABLE();
             }
             // Same thread that was working on the report triggered handler again, skip report and
             // go to popup + shutdown
             LinuxHandling::popUpAndExit();
-            std::unreachable();
+            FAULT_UNREACHABLE();
         }
         ++LinuxHandling::tryCount;
     }
@@ -1354,7 +1344,7 @@ struct LinuxHandling {
         LinuxHandling::offsetForMsg = offset;
         LinuxHandling::writeReportDetailsToBuffer(static_cast<const ucontext_t*>(uctx), offset);
         LinuxHandling::commonActions(offset, _internal::config.printMsgToStdErr, true, nullptr);
-        std::unreachable();
+        FAULT_UNREACHABLE();
     }
 
     [[noreturn]] static void commonActions(std::size_t offset, bool printToStderr, bool writeReport,
@@ -1368,7 +1358,7 @@ struct LinuxHandling {
         LinuxHandling::tracePid = _Fork();   // Async signal safe.
         if (LinuxHandling::tracePid == 0) {  // Child process
             LinuxHandling::doWriteToFile(offset, printToStderr, writeReport, exceptionTrace);
-            std::unreachable();
+            FAULT_UNREACHABLE();
         } else if (LinuxHandling::tracePid > 0) {  // Parent process
             alarm(3);
             waitpid(LinuxHandling::tracePid, nullptr,
@@ -1377,7 +1367,7 @@ struct LinuxHandling {
             LinuxHandling::tracePid = -1;
         }
         LinuxHandling::popUpAndExit();
-        std::unreachable();
+        FAULT_UNREACHABLE();
     }
 
    public:
@@ -1476,13 +1466,13 @@ struct TerminateHandling {
     [[noreturn]] static void customTerminator() {
         if (needsImmediateShutdown()) {  // Signal forked child has hit terminate condition
             ExitHandler::shutdown();
-            std::unreachable();
+            FAULT_UNREACHABLE();
         }
         if (!TerminateHandling::shouldExecuteHandler()) {  // Another thread has been hit
                                                            // with terminate or signal, wait for
                                                            // it to exit the process
             ExitHandler::parkThreadForever();
-            std::unreachable();
+            FAULT_UNREACHABLE();
         }
 
         // While std::current_exception() can potentially point to throwing destructors,
@@ -1535,13 +1525,13 @@ struct TerminateHandling {
         }
         if (hasAnySignalBeenTriggered()) {
             ExitHandler::parkThreadForever();
-            std::unreachable();
+            FAULT_UNREACHABLE();
         }
         constexpr bool kWriteReport{true};
         TerminateHandling::controlledShutdown(userMessage, _internal::config.printMsgToStdErr,
                                               kWriteReport, trace, _internal::config.showPopUp,
                                               _internal::config.resolveNonSignalTrace);
-        std::unreachable();
+        FAULT_UNREACHABLE();
     }
 
    public:
@@ -1561,7 +1551,7 @@ struct TerminateHandling {
         WindowsHandling::fromTerminate(message, kTerminateCode, printToStderr, writeReport,
                                        exceptionTrace, showPopUp, resolveTrace);
 #endif
-        std::unreachable();
+        FAULT_UNREACHABLE();
     }
 
     static void setup() noexcept {
@@ -1646,7 +1636,7 @@ void panic(std::string_view message, const std::optional<ObjectTrace>& exception
     TerminateHandling::controlledShutdown(
         message, _internal::config.panic.printMsgToStdErr, _internal::config.panic.writeReport,
         optCppObjTrace, _internal::config.panic.showPopUp, _internal::config.resolveNonSignalTrace);
-    std::unreachable();
+    FAULT_UNREACHABLE();
 }
 
 void assertionFailure(std::string_view expr, std::string_view file, std::uint32_t line,
@@ -1672,11 +1662,12 @@ void assertionFailure(std::string_view expr, std::string_view file, std::uint32_
     TerminateHandling::controlledShutdown(
         std::string_view{msg.data(), offset}, _internal::config.printMsgToStdErr, kWriteReport,
         kNoExceptionTrace, _internal::config.showPopUp, _internal::config.resolveNonSignalTrace);
-    std::unreachable();
+    FAULT_UNREACHABLE();
 }
 
 void assertionFailure(std::string_view expr, std::source_location loc, std::string_view userMsg) {
     assertionFailure(expr, loc.file_name(), loc.line(), loc.function_name(), userMsg);
+    FAULT_UNREACHABLE();
 }
 
 ::FaultInitResult fromCppInitResult(InitResult cppRes) {
@@ -1693,17 +1684,38 @@ bool faultCanSafeTraceBeCollected() FAULT_NOEXCEPT {
     return fault::canSafeTraceBeCollected();
 }
 
+FaultConfig faultGetDefaultConfig() FAULT_NOEXCEPT {
+    fault::Config config{};
+    return FaultConfig{
+        .appName = config.appName.data(),
+        .buildID = config.buildID.data(),
+        .crashDir = config.crashDir.data(),
+        .reportFileName = config.reportFileName.data(),
+        .prefixDateOnFilename = config.prefixDateOnFilename,
+        .baseErrorMsg = config.baseErrorMsg.data(),
+        .showPopUp = config.showPopUp,
+        .printMsgToStdErr = config.printMsgToStdErr,
+        .useUnsafeStacktraceOnSignalFallback = config.useUnsafeStacktraceOnSignalFallback,
+        .resolveNonSignalTrace = config.resolveNonSignalTrace,
+        .signal = {.enable = config.signal.enable,
+                   .raiseDefaultAfterwards = config.signal.raiseDefaultAfterwards},
+        .panic = {.printMsgToStdErr = config.panic.printMsgToStdErr,
+                  .showPopUp = config.panic.showPopUp,
+                  .writeReport = config.panic.writeReport}};
+}
+
 FaultInitResult faultInit(const FaultConfig* config) FAULT_NOEXCEPT {
     if (config == nullptr) {
         return fault::fromCppInitResult(fault::tryInit(fault::Config{}));
     }
+
     fault::Config cppConfig{
-        .appName{config->appName},
-        .buildID{config->buildID},
-        .crashDir{config->crashDir},
-        .reportFileName{config->reportFileName},
+        .appName{fault::utils::getSafeView(config->appName)},
+        .buildID{fault::utils::getSafeView(config->buildID)},
+        .crashDir{fault::utils::getSafeView(config->crashDir)},
+        .reportFileName{fault::utils::getSafeView(config->reportFileName)},
         .prefixDateOnFilename = config->prefixDateOnFilename,
-        .baseErrorMsg{config->baseErrorMsg},
+        .baseErrorMsg{fault::utils::getSafeView(config->baseErrorMsg)},
         .showPopUp = config->showPopUp,
         .printMsgToStdErr = config->printMsgToStdErr,
         .useUnsafeStacktraceOnSignalFallback = config->useUnsafeStacktraceOnSignalFallback,
@@ -1720,7 +1732,13 @@ FaultInitResult faultInit(const FaultConfig* config) FAULT_NOEXCEPT {
 void faultPanic(const char* message) {
     constexpr std::optional<fault::ObjectTrace> kNoExceptionTrace{std::nullopt};
     fault::panic(std::string_view{message}, kNoExceptionTrace);
-    std::unreachable();
+    FAULT_UNREACHABLE();
+}
+
+void faultAssertionFailure(const char* expr, const char* file, uint32_t line, const char* func,
+                           const char* userMsg) {
+    fault::assertionFailure(expr, file, line, func, userMsg);
+    FAULT_UNREACHABLE();
 }
 
 }  // extern "C"

@@ -1,19 +1,10 @@
 #ifndef FAULT_H
 #define FAULT_H
 
+#include "fault/attributes.h"
 #include "fault/fault_export.h"
 
 #include <stdint.h>
-
-#if (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L) || \
-    (defined(__cplusplus) && __cplusplus >= 201103L)
-#define FAULT_NORETURN [[noreturn]]
-#define FAULT_NODISCARD [[nodiscard]]
-#else
-// Fallback for C11/C17 or older C++
-#define FAULT_NORETURN _Noreturn
-#define FAULT_NODISCARD __attribute__((warn_unused_result))
-#endif
 
 #ifdef __cplusplus
 #define FAULT_NOEXCEPT noexcept
@@ -68,6 +59,8 @@ typedef struct FaultInitResult {
     enum FaultConfigWarning warnings;
 } FaultInitResult;
 
+FAULT_EXPORT FaultConfig faultGetDefaultConfig() FAULT_NOEXCEPT;
+
 FAULT_EXPORT FaultInitResult faultInit(const FaultConfig* config) FAULT_NOEXCEPT;
 
 // Stores shutdown request, returning wether the request had already been made before or by another
@@ -81,6 +74,36 @@ FAULT_NODISCARD FAULT_EXPORT bool faultHasShutdownRequest() FAULT_NOEXCEPT;
 FAULT_NODISCARD FAULT_EXPORT bool faultCanSafeTraceBeCollected() FAULT_NOEXCEPT;
 
 FAULT_NORETURN FAULT_EXPORT void faultPanic(const char* message);
+
+FAULT_NORETURN FAULT_EXPORT void faultAssertionFailure(const char* expr, const char* file,
+                                                       uint32_t line, const char* func,
+                                                       const char* userMsg);
+
+static inline void faultVerify(bool cond, const char* message) {
+    if (FAULT_UNLIKELY(!(cond))) {
+        faultPanic(message);
+        FAULT_UNREACHABLE();
+    }
+}
+
+#ifndef __cplusplus
+#define FAULT_EXPECT_IMPL(cond, ...) \
+    faultAssertionFailure(#cond, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+#endif
+
+#define FAULT_EXPECT(cond, ...)                     \
+    do {                                            \
+        if (FAULT_UNLIKELY(!(cond))) {              \
+            FAULT_EXPECT_IMPL(cond, ##__VA_ARGS__); \
+            FAULT_UNREACHABLE();                    \
+        }                                           \
+    } while (0)
+
+#ifdef NDEBUG
+#define FAULT_ASSERT(cond, ...) ((void)0)
+#else
+#define FAULT_ASSERT(cond, ...) FAULT_EXPECT(cond, ##__VA_ARGS__)
+#endif
 
 #ifdef __cplusplus
 }  // extern "C"
