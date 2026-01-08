@@ -1,0 +1,56 @@
+---
+BasedOnStyle: Google
+IndentWidth: 4
+TabWidth: 4
+ColumnLimit: 100
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+PointerAlignment: Left
+SpacesInParentheses: false
+SpaceBeforeParens: ControlStatements
+AlwaysBreakTemplateDeclarations: Yes
+EmptyLineBeforeAccessModifier: Always
+IndentRequires: true
+SortIncludes: true
+IncludeBlocks: Regroup
+# C++ specific tweaks
+DerivePointerAlignment: false
+# Tell Clang-Format what the "main" header looks like.
+IncludeCategories:
+  # 1 - Header matching current source file
+  - Regex: '^<glad/.*>'
+    Priority: 0
+    SortPriority: 0
+    CaseSensitive: true
+
+  #Priority 1: Main header (automatic, but you could make explicit)
+  - Regex: '^".*\.h"$'  # if you want to be explicit
+    Priority: 1
+    SortPriority: 1
+
+  # Priority 2: System/standard library headers
+  - Regex: '^<[^/]*>$'
+    Priority: 2
+    SortPriority: 2
+    CaseSensitive: true
+  
+  # Priority 3: System headers with subdirectories
+  - Regex: '^<.*/'
+    Priority: 3
+    SortPriority: 3
+    CaseSensitive: true
+  
+  # Priority 4: All other headers (project headers, third-party, etc.)
+  - Regex: '.*'
+    Priority: 4
+    SortPriority: 4
+    CaseSensitive: true
+
+  # Priority 5: project headers
+  - Regex: '^"dronelab/.*"'
+    Priority: 5
+    SortPriority: 5
+    CaseSensitive: true
+
+IncludeIsMainRegex: '.*'

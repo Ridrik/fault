@@ -1,0 +1,11 @@
+option(FAULT_BUNDLE_CPPTRACE "Bundle cpptrace statically into fault" ON)
+
+if(TARGET cpptrace::cpptrace)
+    message(STATUS "fault: Using existing cpptrace::cpptrace target")
+elseif(FAULT_BUNDLE_CPPTRACE)
+    message(STATUS "fault: Bundling internal cpptrace via add_subdirectory")
+    add_subdirectory(cpptrace EXCLUDE_FROM_ALL)
+else()
+    message(STATUS "fault: Searching for system-wide cpptrace")
+    find_package(cpptrace REQUIRED)
+endif()
