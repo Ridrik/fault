@@ -49,8 +49,12 @@
 #ifndef FAULT_HPP
 #define FAULT_HPP
 
+#ifndef NDEBUG
 #define FAULT_EXPECT_IMPL(cond, ...) \
     ::fault::assertionFailure(#cond, std::source_location::current(), ##__VA_ARGS__)
+#else
+#define FAULT_EXPECT_IMPL(cond, ...) ::fault::verify(false, ##__VA_ARGS__)
+#endif
 
 #include "fault/attributes.h"
 #include "fault/fault.h"
@@ -195,7 +199,9 @@ FAULT_EXPORT bool setShutdownRequest() noexcept;
     std::string_view userMsg = {});
 
 /**
- * @brief Verify invariant with no metadata displayed to user or logged in case of failure
+ * @brief Verify invariant. In case of failure, performs panic shutdown, writing object traced
+ * report, visual popup and terminal summary, depending on panic settings. Available on all build
+ * modes.
  *
  * @param cond condition to verify
  * @param userMsg user message to be displayed & logged
@@ -207,19 +213,25 @@ inline void verify(bool cond, std::string_view userMsg = {}) {
     }
 }
 
-// Verify invariant (including release), with location metadata
-
 /**
- * @brief Verify invariant (including release), with location metadata
+ * @brief Similar to verify(), but with location metadata on debug builds
  *
  * @param cond condition to verify
  * @param userMsg user message to be displayed & logged
  * @param loc location metadata to be displayed & logged
  */
-inline void expect(bool cond, std::string_view userMsg = {},
-                   std::source_location loc = std::source_location::current()) {
+inline void expect(bool cond, std::string_view userMsg = {}
+#ifndef NDEBUG
+                   ,
+                   std::source_location loc = std::source_location::current()
+#endif
+) {
     if (!cond) [[unlikely]] {
+#ifndef NDEBUG
         assertionFailure("?", loc, userMsg);
+#else
+        verify(false, usrMsg);
+#endif
         FAULT_UNREACHABLE();
     }
 }

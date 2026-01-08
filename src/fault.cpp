@@ -1591,8 +1591,6 @@ void doInit() {
 }
 
 [[nodiscard]] InitResult tryInit(const Config& config) noexcept {
-    // enum class InitStatus : std::uint8_t { kUninit, kInitializing, kFailed, kInit };
-    // static std::atomic<InitStatus> initStatus{InitStatus::kUninit};
     static std::atomic<bool> isInit{false};
     bool expected{false};
     if (!isInit.compare_exchange_strong(expected, true)) {
