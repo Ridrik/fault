@@ -53,34 +53,6 @@ endif()
 include(GenerateExportHeader)
 generate_export_header(fault BASE_NAME FAULT EXPORT_FILE_NAME include/fault/fault_export.h)
 
-include(GNUInstallDirs)
-include(CMakePackageConfigHelpers)
-
-install(TARGETS fault
-    EXPORT fault-targets
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-)
-
-install(DIRECTORY include/
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-)
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/fault/fault_export.h"
-    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/fault"
-)
-install(EXPORT fault-targets
-    FILE faultTargets.cmake
-    NAMESPACE fault::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/fault
-)
-
-configure_package_config_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/faultConfig.cmake.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/faultConfig.cmake"
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/fault
-)
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/faultConfig.cmake"
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/fault
-)
+if(PROJECT_IS_TOP_LEVEL)
+    include(cmake/install.cmake)
+endif()
