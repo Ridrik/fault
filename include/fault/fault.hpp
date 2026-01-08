@@ -1,13 +1,14 @@
 /*
+ * libfault - A C++ and C fault handling library for Linux and Windows, containing signal and
+ * exception handlers, as well as user assertions and panic options, generating reports with
+ * metadata, raw or resolved traces, and more
+ * https://github.com/Ridrik/libfault
+ *
+ * Licensed under the MIT License.
+ */
 
-FaultLib - A C++ and C fault handling library, containing signal and exception handlers, as well as
-user assertions and panic options, generating reports with metadata, raw or resolved traces, and
-more
-
-Developer: Rodrigo Rosa
-License: MIT 2026
-
-Linux Signal Handling:
+/**
+   @brief Linux Signal Handling:
     Searches for `zenity` and `kdialog` on `$PATH`, recording their locations, if any.
     sets signal handlers for: SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT. Each handler
     does the following if triggered: 1. Generate and write object trace to crash report
@@ -16,7 +17,7 @@ Linux Signal Handling:
     cleanup. User popup are implemented using either `zenity` or `kdialog`, which requires them to
     be found in `$PATH`.
 
-Windows Exception Handling:
+   @brief Windows Exception Handling:
     sets signal handler for SIGABRT and sets an unhandled exception filter. The following codes are
     intercepted: EXCEPTION_STACK_OVERFLOW, EXCEPTION_ACCESS_VIOLATION,
     EXCEPTION_ILLEGAL_INSTRUCTION, EXCEPTION_IN_PAGE_ERROR, EXCEPTION_ARRAY_BOUNDS_EXCEEDED,
@@ -28,25 +29,28 @@ Windows Exception Handling:
     4. Returns from Windows Handler with execute handler comand, or Terminates Process if on abort
     handler
 
-Both platforms Signal/Exception handling
-    @Note Thread-safe
-    @Note Signal safety is prioritized, noting that safe trace generation is only available on
-    certain configurations. User may choose to set a config flag to collect a regular (signal
-    unsafe) trace as fallback, to which the report will become a best-effort attempt. This library
-    attempts to mitigate this action with deadlock expiration safeguards, so that the expected
-    termination behaviour is seen nonetheless.
+   @brief Both platforms Signal / Exception handling @Note Thread - safe @Note Signal safety is
+    prioritized, noting that safe trace generation is only available on certain configurations.User
+    may choose to set a config flag to collect a regular(signal unsafe) trace as fallback, to which
+    the report will become a best - effort attempt.This library attempts to mitigate this action
+    with deadlock expiration safeguards, so that the expected termination behaviour is seen
+    nonetheless.
 
-Terminate Handling
-    Sets std::terminate handler. Performs the following, depending on init config flags: Creates
-    object trace and message with unhandled exception; runs user hook; writes the crash report,
-    prints summary message to stderr, and displays user popup, followed by terminating process with
-    SIGABRT code on Linux, and code 3 on Windows
+   @brief Terminate Handling Sets std::terminate handler.Performs the following, depending on init
+    config flags : Creates object trace and message with unhandled exception; runs user hook; writes
+    the crash report, prints summary message to stderr, and displays user popup, followed by
+    terminating process with SIGABRT code on Linux, and code 3 on Windows
 
-    @Note On Linux, popup is dependent on either zenity or kdialog being found on `$PATH`
-*/
+    @Note On Linux,
+    popup is dependent on either zenity or kdialog being found on `$PATH`
+
+ */
 
 #ifndef FAULT_HPP
 #define FAULT_HPP
+
+#define FAULT_EXPECT_IMPL(cond, ...) \
+    ::fault::assertionFailure(#cond, std::source_location::current(), ##__VA_ARGS__)
 
 #include "fault/attributes.h"
 #include "fault/fault.h"
@@ -129,37 +133,73 @@ struct InitResult {
     }
 };
 
-// Initializes Fault library. Call this to setup signal handlers, exception handlers, and setup
-// additional general parameters. Also recommended to call before using any assertion or panic
-// utilities.
-// Returns initialization status, along with warning flags. Initialization may only fail if
-// messages/paths arguments exceed buffer sizes, or if the report location path is invalid.
+/**
+ * @brief Initializes Fault library. Call this to setup signal handlers, exception handlers, and
+ * setup additional general parameters. Also recommended to call before using any assertion or
+ * panic utilities.
+ *
+ * @param config configuration options
+ * @return initialization status, along with warning flags. Initialization may only fail if
+ * messages/paths arguments exceed buffer sizes, or if the report location path is invalid.
+ */
 FAULT_EXPORT InitResult init(const Config& config = {}) noexcept;
 
-// Stores shutdown request, returning wether this is the first request made.
-// @Note Thread-safe
+/**
+ * @brief Stores shutdown request
+ *
+ * @return returning wether this is the first request made.
+ */
 FAULT_EXPORT bool setShutdownRequest() noexcept;
 
-// Returns wether any shutdown request has been made.
+/**
+ * @brief Returns wether any shutdown request has been made.
+ *
+ */
 [[nodiscard]] FAULT_EXPORT bool hasShutdownRequest() noexcept;
 
-// Returns wether a signal safe object trace can be collected. If false and option to collect
-// regular trace is not selected, then no trace will be attempted on signal handlers or Windows
-// exception handlers
+/**
+ * @brief Returns wether a signal safe object trace can be collected. If false and option to
+ * collect regular trace is not selected, then no trace will be attempted on signal handlers or
+ * Windows exception handlers
+ *
+ */
 [[nodiscard]] FAULT_EXPORT bool canSafeTraceBeCollected() noexcept;
 
 // Use this to immediately shutdown the application and perform similar actions as the fault
 // handlers, such as error message to stderr, fatal popup and write report.
+
+/**
+ * @brief Use this to immediately shutdown the application and perform similar actions as the
+ * fault handlers, such as printing error message to stderr, displaying a fatal popup and write
+ * report with metadata and object trace.
+ *
+ * @param message message to be displayed on report, stderr and popup
+ * @param exceptionTrace optional trace. If set, the report will use it instead of a default
+ * generated one. Example: provide a trace right handling an exception using
+ * cpptrace::raw_trace_from_current_exception().resolve_object_trace()
+ *
+ */
 [[noreturn]] FAULT_EXPORT void panic(
     std::string_view message, const std::optional<ObjectTrace>& exceptionTrace = std::nullopt);
 
-// Assertion Handler. Similar to panic, but using general configuration parameters, and with
-// metadata information
+/**
+ * @brief Assertion Handler. Similar to panic, but using general configuration parameters, and
+ * with metadata information
+ *
+ * @param expr expression string
+ * @param loc source location (file, line, function name)
+ * @param userMsg user provided message
+ */
 [[noreturn]] FAULT_EXPORT void assertionFailure(
     std::string_view expr, std::source_location loc = std::source_location::current(),
     std::string_view userMsg = {});
 
-// Verify invariant (including release), with no metadata
+/**
+ * @brief Verify invariant with no metadata displayed to user or logged in case of failure
+ *
+ * @param cond condition to verify
+ * @param userMsg user message to be displayed & logged
+ */
 inline void verify(bool cond, std::string_view userMsg = {}) {
     if (!cond) [[unlikely]] {
         panic(userMsg);
@@ -168,6 +208,14 @@ inline void verify(bool cond, std::string_view userMsg = {}) {
 }
 
 // Verify invariant (including release), with location metadata
+
+/**
+ * @brief Verify invariant (including release), with location metadata
+ *
+ * @param cond condition to verify
+ * @param userMsg user message to be displayed & logged
+ * @param loc location metadata to be displayed & logged
+ */
 inline void expect(bool cond, std::string_view userMsg = {},
                    std::source_location loc = std::source_location::current()) {
     if (!cond) [[unlikely]] {
@@ -175,9 +223,6 @@ inline void expect(bool cond, std::string_view userMsg = {},
         FAULT_UNREACHABLE();
     }
 }
-
-#define FAULT_EXPECT_IMPL(cond, ...) \
-    ::fault::assertionFailure(#cond, std::source_location::current(), ##__VA_ARGS__)
 
 }  // namespace fault
 

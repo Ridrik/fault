@@ -1,6 +1,6 @@
 
 add_executable(test_cpp_api test_cpp_api.cpp)
-target_link_libraries(test_cpp_api PRIVATE fault::fault)
+target_link_libraries(test_cpp_api PRIVATE fault::fault cpptrace::cpptrace)
 target_compile_features(test_cpp_api PRIVATE cxx_std_20)
 set_target_properties(test_cpp_api PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
@@ -16,6 +16,11 @@ if(WIN32)
     add_custom_command(TARGET test_cpp_api POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:fault::fault>
+        $<TARGET_FILE_DIR:test_cpp_api>
+    )
+    add_custom_command(TARGET test_cpp_api POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:cpptrace::cpptrace>
         $<TARGET_FILE_DIR:test_cpp_api>
     )
     add_custom_command(TARGET test_c_api POST_BUILD

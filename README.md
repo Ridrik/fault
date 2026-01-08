@@ -1,6 +1,6 @@
 # libfault
 
-libfault is a lightweight, cross-platform crash reporting and panic library for C++20. It provides a unified interface for saving object traces when things go wrong, whether it's a segmentation fault on Linux, an unhandled exception on Windows, a std::terminate or a manual panic/assertion call in your logic.
+libfault is a lightweight, cross-platform crash reporting and panic library for C++20 Linux and Windows. It provides a unified interface for saving object traces when things go wrong, whether it's a segmentation fault on Linux, an unhandled exception on Windows, a std::terminate or a manual panic/assertion call in your logic.
 
 ## Description
 
