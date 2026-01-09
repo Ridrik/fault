@@ -399,7 +399,7 @@ std::tm timeInit() {
 }
 
 struct Config {
-    static constexpr int kAlarmSeconds{3};
+    static constexpr int kAlarmSeconds{5};
     struct TerminateSettings {
         bool enable{true};
         std::optional<TerminateHook> userHook{std::nullopt};
@@ -924,11 +924,11 @@ struct WindowsHandling {
                               bool printToStderr, bool writeReport,
                               const std::optional<cpptrace::object_trace>& exceptionTrace,
                               bool resolveTrace) {
-        if (_internal::Config::Windows::canWriteDump) {
-            WindowsHandling::wasDumpWritten = WindowsHandling::writeMiniDump(exceptionInfo);
-        }
         if (hCrashEvent != nullptr && hCrashEvent != INVALID_HANDLE_VALUE) {
             SetEvent(hCrashEvent);
+        }
+        if (_internal::Config::Windows::canWriteDump) {
+            WindowsHandling::wasDumpWritten = WindowsHandling::writeMiniDump(exceptionInfo);
         }
         WindowsHandling::doWriteReport(offset, printToStderr, writeReport, exceptionTrace,
                                        resolveTrace);
@@ -1729,8 +1729,8 @@ void panic(std::string_view message, const std::optional<ObjectTrace>& exception
     FAULT_UNREACHABLE();
 }
 
-void panic_loc(std::string_view expr, std::string_view file, std::uint32_t line,
-               std::string_view func, std::string_view userMsg) {
+void panic_at(std::string_view expr, std::string_view file, std::uint32_t line,
+              std::string_view func, std::string_view userMsg) {
     std::array<char, 2048> msg{};
     std::size_t offset{0};
     utils::safeAppend(msg.data(), offset, msg.size(), "Assertion ");
@@ -1751,14 +1751,13 @@ void panic_loc(std::string_view expr, std::string_view file, std::uint32_t line,
     utils::safeAppend(msg.data(), offset, msg.size(), " in ");
     utils::safeAppend(msg.data(), offset, msg.size(), func.data(), func.size());
 
-    constexpr bool kWriteReport{true};
     constexpr std::optional<ObjectTrace> kNoExceptionTrace{std::nullopt};
     panic(std::string_view{msg.data(), offset}, kNoExceptionTrace);
     FAULT_UNREACHABLE();
 }
 
-void panic_loc(std::string_view expr, std::source_location loc, std::string_view userMsg) {
-    panic_loc(expr, loc.file_name(), loc.line(), loc.function_name(), userMsg);
+void panic_at(std::string_view expr, std::source_location loc, std::string_view userMsg) {
+    panic_at(expr, loc.file_name(), loc.line(), loc.function_name(), userMsg);
     FAULT_UNREACHABLE();
 }
 
@@ -1831,9 +1830,9 @@ void fault_panic(const char* message) {
     FAULT_UNREACHABLE();
 }
 
-void fault_panic_loc(const char* expr, const char* file, uint32_t line, const char* func,
-                     const char* userMsg) {
-    fault::panic_loc(expr, file, line, func, userMsg);
+void fault_panic_at(const char* expr, const char* file, uint32_t line, const char* func,
+                    const char* userMsg) {
+    fault::panic_at(expr, file, line, func, userMsg);
     FAULT_UNREACHABLE();
 }
 

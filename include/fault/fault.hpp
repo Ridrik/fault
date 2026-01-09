@@ -14,8 +14,7 @@
     does the following if triggered: 1. Generate and write object trace to crash report
     directory, 2. prints summary error message on stderr, 3. Displays user popup if available
     (trying zenity, then kdialog). 4. If set, reraises default signal, else exits with no further
-    cleanup. User popup are implemented using either `zenity` or `kdialog`, which requires them to
-    be found in `$PATH`.
+    cleanup.
 
    @brief Windows Exception Handling:
     sets signal handler for SIGABRT and sets an unhandled exception filter. The following codes are
@@ -30,7 +29,7 @@
     handler
 
    @brief Both platforms Signal / Exception handling
-    @Note Thread - safe
+    @Note Thread-safe
     @Note Signal safety is prioritized, noting that safe trace generation is only available on
     certain configurations. User may choose to set a config flag to collect a regular(signal unsafe)
     trace as fallback, to which the report will become a best - effort attempt.This library attempts
@@ -38,9 +37,10 @@
     behaviour is seen nonetheless.
 
    @brief Terminate Handling Sets std::terminate handler. Performs the following, depending on init
-    config flags : Creates object trace and message with unhandled exception; runs user hook; writes
+    config flags: Creates object trace and message with unhandled exception; runs user hook; writes
     the crash report, prints summary message to stderr, and displays user popup, followed by
-    raising default abort() if on linux, or terminating process on Windows
+    raising default abort() if on linux, or terminating process on Windows. On windows, it also
+    writes a minidump to a corresponding .dmp file of same name and path as the report.
 
     @Note On Linux,
     popup is dependent on either zenity or kdialog being found on `$PATH`
@@ -56,7 +56,7 @@
 #undef FAULT_EXPECT_IMPL
 
 #define FAULT_EXPECT_AT_IMPL(cond, ...) \
-    ::fault::panic_loc(#cond, std::source_location::current(), ##__VA_ARGS__)
+    ::fault::panic_at(#cond, std::source_location::current(), ##__VA_ARGS__)
 
 #if FAULT_USE_LOCATIONS
 #define FAULT_EXPECT_IMPL(cond, ...) FAULT_EXPECT_AT_IMPL(cond, ##__VA_ARGS__)
@@ -190,7 +190,8 @@ FAULT_EXPORT bool set_shutdown_request() noexcept;
 /**
  * @brief Use this to immediately shutdown the application and perform similar actions as the
  * fault handlers, such as printing error message to stderr, displaying a fatal popup and write
- * report with metadata and object trace.
+ * report with metadata and object trace. On Linux, default abort is raised afterwards, whereas on
+ * Windows, if set, a minidump is generated before terminating the process.
  *
  * @param message message to be displayed on report, stderr and popup
  * @param exceptionTrace optional trace. If set, the report will use it instead of a default
@@ -208,9 +209,9 @@ FAULT_EXPORT bool set_shutdown_request() noexcept;
  * @param loc source location (file, line, function name)
  * @param userMsg user provided message
  */
-[[noreturn]] FAULT_EXPORT void panic_loc(std::string_view expr,
-                                         std::source_location loc = std::source_location::current(),
-                                         std::string_view userMsg = {});
+[[noreturn]] FAULT_EXPORT void panic_at(std::string_view expr,
+                                        std::source_location loc = std::source_location::current(),
+                                        std::string_view userMsg = {});
 
 /**
  * @brief Verify invariant. In case of failure, performs panic shutdown, writing object traced
@@ -237,7 +238,7 @@ inline void verify(bool cond, std::string_view userMsg = {}) {
 inline void expect_at(bool cond, std::string_view userMsg = {},
                       std::source_location loc = std::source_location::current()) {
     if (!cond) [[unlikely]] {
-        panic_loc("", loc, userMsg);
+        panic_at("", loc, userMsg);
         FAULT_UNREACHABLE();
     }
 }

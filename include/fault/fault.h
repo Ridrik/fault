@@ -78,8 +78,8 @@ FAULT_NODISCARD FAULT_EXPORT bool fault_can_collect_safe_trace() FAULT_NOEXCEPT;
 
 FAULT_NORETURN FAULT_EXPORT void fault_panic(const char* message);
 
-FAULT_NORETURN FAULT_EXPORT void fault_panic_loc(const char* expr, const char* file, uint32_t line,
-                                                 const char* func, const char* userMsg);
+FAULT_NORETURN FAULT_EXPORT void fault_panic_at(const char* expr, const char* file, uint32_t line,
+                                                const char* func, const char* userMsg);
 
 static inline void fault_verify(bool cond, const char* message) {
     if (FAULT_UNLIKELY(!(cond))) {
@@ -92,7 +92,7 @@ static inline void fault_verify(bool cond, const char* message) {
 
 #ifndef FAULT_EXPECT_AT_IMPL
 #define FAULT_EXPECT_AT_IMPL(cond, ...) \
-    fault_panic_loc(#cond, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+    fault_panic_at(#cond, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 #endif
 
 #ifndef FAULT_EXPECT_IMPL
@@ -120,7 +120,7 @@ static inline void fault_verify(bool cond, const char* message) {
     } while (0)
 
 #if FAULT_ASSERT_ACTIVE
-#define FAULT_ASSERT(cond, ...) FAULT_EXPECT(cond, ##__VA_ARGS__)
+#define FAULT_ASSERT(cond, ...) FAULT_EXPECT_AT(cond, ##__VA_ARGS__)
 #else
 #define FAULT_ASSERT(cond, ...) ((void)0)
 #endif

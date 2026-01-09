@@ -43,7 +43,7 @@ void terminateTest() {
 
 void foo() {
     volatile int* p{nullptr};
-    *p = 42;
+    fault::expect_at(p != nullptr);
 }
 
 int main() {
@@ -57,6 +57,7 @@ int main() {
         return EXIT_FAILURE;
     }
 
+    FAULT_ASSERT(1 > 2);
     foo();
 
     return 0;
