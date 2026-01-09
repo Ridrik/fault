@@ -2,6 +2,10 @@
 #define FAULT_CONFIG_H
 
 // --- Location Metadata Configuration ---
+#if defined(FAULT_ENABLE_LOCATIONS) && defined(FAULT_DISABLE_LOCATIONS)
+#error "Conflicting Fault configurations: Both ON and OFF locations forced!"
+#endif
+
 #if defined(FAULT_ENABLE_LOCATIONS)
 #define FAULT_USE_LOCATIONS 1
 #elif defined(FAULT_DISABLE_LOCATIONS) || defined(NDEBUG)
@@ -11,6 +15,10 @@
 #endif
 
 // --- Assertion Configuration ---
+#if defined(FAULT_FORCE_ASSERTIONS_ON) && defined(FAULT_FORCE_ASSERTIONS_OFF)
+#error "Conflicting Fault configurations: Both ON and OFF assertions forced!"
+#endif
+
 #if defined(FAULT_FORCE_ASSERTIONS_ON)
 #define FAULT_ASSERT_ACTIVE 1
 #elif defined(FAULT_FORCE_ASSERTIONS_OFF) || defined(NDEBUG)
