@@ -804,8 +804,12 @@ struct WindowsHandling {
     }
 
     static bool writeMiniDump(EXCEPTION_POINTERS* exceptionPtrs = nullptr) {
-        HANDLE hFile = CreateFileA(_internal::Config::Windows::dumpPath.data(), GENERIC_WRITE, 0,
-                                   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        std::array<wchar_t, _internal::Config::Windows::dumpPath.size()> dumpPathW{};
+        const HANDLE hFile = utils::utf8ToUtf16Stack(_internal::Config::Windows::dumpPath.data(),
+                                                     dumpPathW.data(), dumpPathW.size())
+                                 ? CreateFileW(dumpPathW.data(), GENERIC_WRITE, 0, NULL,
+                                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL)
+                                 : INVALID_HANDLE_VALUE;
         if (hFile == INVALID_HANDLE_VALUE) {
             return false;
         }
@@ -961,7 +965,7 @@ struct WindowsHandling {
         WindowsHandling::hWatchdogThread =
             CreateThread(nullptr, 0, WindowsHandling::watchdogFunction, nullptr, 0, nullptr);
         if (WindowsHandling::hWatchdogThread != nullptr) {
-            SetThreadPriority(WindowsHandling::hWatchdogThread, THREAD_PRIORITY_TIME_CRITICAL);
+            SetThreadPriority(WindowsHandling::hWatchdogThread, THREAD_PRIORITY_HIGHEST);
         }
     }
 
