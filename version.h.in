@@ -1,0 +1,29 @@
+#ifndef FAULT_VERSION_H
+#define FAULT_VERSION_H
+
+// clang-format off
+#ifdef __cplusplus
+#include <string_view>
+namespace fault::version {
+
+constexpr std::string_view kName = "FAULT";
+constexpr std::string_view kDescription =
+    "libfault is a lightweight, cross-platform crash reporting and panic library for C++20. It "
+    "provides a unified interface for saving object traces when things go wrong, whether it's a "
+    "segmentation fault on Linux, an unhandled exception on Windows, a std::terminate or a manual "
+    "panic/assertion call in your logic.";
+constexpr int kMajor = @PROJECT_VERSION_MAJOR@;
+constexpr int kMinor = @PROJECT_VERSION_MINOR@;
+constexpr int kPatch = @PROJECT_VERSION_PATCH@;
+constexpr const char* kString = "@PROJECT_VERSION@";
+
+}  // namespace fault::version
+#endif
+
+#define FAULT_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define FAULT_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define FAULT_VERSION_PATCH @PROJECT_VERSION_PATCH@
+#define FAULT_VERSION_STR   "@PROJECT_VERSION@"
+// clang-format on
+
+#endif  // FAULT_VERSION_H

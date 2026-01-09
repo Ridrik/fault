@@ -2,6 +2,7 @@
 
 #include "fault/attributes.h"
 #include "fault/fault.h"
+#include "fault/version.h"
 
 #include <array>
 #include <atomic>
@@ -556,6 +557,9 @@ bool writeReport(std::string_view errContext,
 #endif
         return false;
     }
+    utils::safePrint("--- FAULT REPORT v", fd);
+    utils::safePrint(version::kString, fd);
+    utils::safePrint(" ---\n", fd);
     utils::safePrint("App Name: ", fd);
     utils::safePrint(config.appName.data(), fd);
     utils::safePrint("\nBuild ID: ", fd);
@@ -835,8 +839,9 @@ struct WindowsHandling {
         if (printToStderr) {
             std::array<char, 2048> stdErrBfr{};
             std::size_t offset{0};
-            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
-                              "\n=== [FAULT BEGIN] ===\n");
+            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(), "\n--- FAULT REPORT v");
+            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(), version::kString);
+            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(), " ---\n");
             WindowsHandling::finalBuffer[WindowsHandling::offsetForMsg] = '\0';
             utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
                               WindowsHandling::finalBuffer.data());  // stdcerr
@@ -854,8 +859,7 @@ struct WindowsHandling {
                 utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
                                   _internal::Config::Windows::dumpPath.data());
             }
-            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
-                              "\n=== [FAULT END] ===\n");
+            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(), "\n--- FAULT END ---\n");
             ExitHandler::writeToStdErr(std::string_view{stdErrBfr.data(), offset});
         }
         WindowsHandling::reportDone = true;
@@ -1374,8 +1378,9 @@ struct LinuxHandling {
         if (printToStderr) {
             std::array<char, 2048> stdErrBfr{};
             std::size_t offset{0};
-            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
-                              "\n=== [FAULT BEGIN] ===\n");
+            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(), "\n--- FAULT REPORT v");
+            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(), version::kString);
+            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(), " ---\n");
             LinuxHandling::finalBuffer[LinuxHandling::offsetForMsg] = '\0';
             utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
                               LinuxHandling::finalBuffer.data());  // stdcerr
@@ -1387,8 +1392,7 @@ struct LinuxHandling {
                 utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
                                   "\nCould not generate report.\n");
             }
-            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
-                              "\n=== [FAULT END] ===\n");
+            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(), "\n--- FAULT END ---\n");
             ExitHandler::writeToStdErr(std::string_view{stdErrBfr.data(), offset});
         }
         ExitHandler::shutdown();

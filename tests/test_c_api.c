@@ -19,6 +19,8 @@ int main() {
         printf("Failed to init libfault\n");
         return 1;
     }
+    volatile int* p = NULL;
+    *p = 42;
 
     infinite_recursion();  // Triggers seg fault on linux
 

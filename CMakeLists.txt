@@ -1,8 +1,13 @@
-cmake_minimum_required(VERSION 4.1.1)
+cmake_minimum_required(VERSION 3.15...4.1)
 
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 project(faultproject VERSION 0.1.0 LANGUAGES C CXX)
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/version.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/fault/version.h"
+)
 
 option(FAULT_BUILD_SHARED "Build fault as a shared library" ON)
 if(FAULT_BUILD_SHARED)
@@ -24,6 +29,7 @@ add_subdirectory(extern) # cpptrace
 target_include_directories(fault PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
     $<INSTALL_INTERFACE:include>
 )
 
