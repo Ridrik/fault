@@ -565,7 +565,7 @@ bool writeReport(std::string_view errContext,
         const auto resolvedTraceStr = cpptrace::generate_trace().to_string();
         utils::safePrint(resolvedTraceStr.c_str(), fd);
         utils::safePrint("\n(Regular resolved stacktrace used)\n", fd);
-    } else if (canSafeTraceBeCollected()) {
+    } else if (can_safetrace_becollected()) {
         // Program is inside restrictive signal handling (Possibly linux posix). Collect
         // stacktrace and print safely
         std::array<cpptrace::frame_ptr, 128> buffer{};
@@ -1609,16 +1609,16 @@ static std::atomic<bool> shutdownRequest{false};  // NOLINT
 
 }  // namespace
 
-bool setShutdownRequest() noexcept {
+bool set_shutdown_request() noexcept {
     bool expected{false};
     return shutdownRequest.compare_exchange_strong(expected, true);
 }
 
-bool hasShutdownRequest() noexcept {
+bool has_shutdown_request() noexcept {
     return shutdownRequest;
 }
 
-bool canSafeTraceBeCollected() noexcept {
+bool can_safetrace_becollected() noexcept {
     return cpptrace::can_signal_safe_unwind() && cpptrace::can_get_safe_object_frame();
 }
 
@@ -1637,12 +1637,16 @@ void panic(std::string_view message, const std::optional<ObjectTrace>& exception
     FAULT_UNREACHABLE();
 }
 
-void assertionFailure(std::string_view expr, std::string_view file, std::uint32_t line,
-                      std::string_view func, std::string_view userMsg) {
+void assertion_failure(std::string_view expr, std::string_view file, std::uint32_t line,
+                       std::string_view func, std::string_view userMsg) {
     std::array<char, 2048> msg{};
     std::size_t offset{0};
-    utils::safeAppend(msg.data(), offset, msg.size(), "Assertion '");
-    utils::safeAppend(msg.data(), offset, msg.size(), expr.data(), expr.size());
+    utils::safeAppend(msg.data(), offset, msg.size(), "Assertion");
+    if (!expr.empty()) {
+        utils::safeAppend(msg.data(), offset, msg.size(), " '");
+        utils::safeAppend(msg.data(), offset, msg.size(), expr.data(), expr.size());
+        utils::safeAppend(msg.data(), offset, msg.size(), "'");
+    }
     utils::safeAppend(msg.data(), offset, msg.size(), "' Failed");
     if (!userMsg.empty()) {
         utils::safeAppend(msg.data(), offset, msg.size(), " | Message: ");
@@ -1663,8 +1667,8 @@ void assertionFailure(std::string_view expr, std::string_view file, std::uint32_
     FAULT_UNREACHABLE();
 }
 
-void assertionFailure(std::string_view expr, std::source_location loc, std::string_view userMsg) {
-    assertionFailure(expr, loc.file_name(), loc.line(), loc.function_name(), userMsg);
+void assertion_failure(std::string_view expr, std::source_location loc, std::string_view userMsg) {
+    assertion_failure(expr, loc.file_name(), loc.line(), loc.function_name(), userMsg);
     FAULT_UNREACHABLE();
 }
 
@@ -1678,11 +1682,11 @@ void assertionFailure(std::string_view expr, std::source_location loc, std::stri
 
 extern "C" {
 
-bool faultCanSafeTraceBeCollected() FAULT_NOEXCEPT {
-    return fault::canSafeTraceBeCollected();
+bool fault_can_safetrace_becollected() FAULT_NOEXCEPT {
+    return fault::can_safetrace_becollected();
 }
 
-FaultConfig faultGetDefaultConfig() FAULT_NOEXCEPT {
+FaultConfig fault_get_default_config() FAULT_NOEXCEPT {
     fault::Config config{};
     return FaultConfig{
         .appName = config.appName.data(),
@@ -1702,7 +1706,7 @@ FaultConfig faultGetDefaultConfig() FAULT_NOEXCEPT {
                   .writeReport = config.panic.writeReport}};
 }
 
-FaultInitResult faultInit(const FaultConfig* config) FAULT_NOEXCEPT {
+FaultInitResult fault_init(const FaultConfig* config) FAULT_NOEXCEPT {
     if (config == nullptr) {
         return fault::fromCppInitResult(fault::tryInit(fault::Config{}));
     }
@@ -1727,15 +1731,15 @@ FaultInitResult faultInit(const FaultConfig* config) FAULT_NOEXCEPT {
     return fault::fromCppInitResult(fault::tryInit(cppConfig));
 }
 
-void faultPanic(const char* message) {
+void fault_panic(const char* message) {
     constexpr std::optional<fault::ObjectTrace> kNoExceptionTrace{std::nullopt};
     fault::panic(std::string_view{message}, kNoExceptionTrace);
     FAULT_UNREACHABLE();
 }
 
-void faultAssertionFailure(const char* expr, const char* file, uint32_t line, const char* func,
-                           const char* userMsg) {
-    fault::assertionFailure(expr, file, line, func, userMsg);
+void fault_assertion_failure(const char* expr, const char* file, uint32_t line, const char* func,
+                             const char* userMsg) {
+    fault::assertion_failure(expr, file, line, func, userMsg);
     FAULT_UNREACHABLE();
 }
 

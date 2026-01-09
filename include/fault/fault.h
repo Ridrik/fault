@@ -1,11 +1,11 @@
 #ifndef FAULT_H
 #define FAULT_H
 
-#include "fault/attributes.h"
-#include "fault/config.h"
-#include "fault/fault_export.h"
-
 #include <stdint.h>
+
+#include <fault/attributes.h>
+#include <fault/config.h>
+#include <fault/fault_export.h>
 
 #ifdef __cplusplus
 #define FAULT_NOEXCEPT noexcept
@@ -60,29 +60,29 @@ typedef struct FaultInitResult {
     enum FaultConfigWarning warnings;
 } FaultInitResult;
 
-FAULT_EXPORT FaultConfig faultGetDefaultConfig() FAULT_NOEXCEPT;
+FAULT_EXPORT FaultConfig fault_get_default_config() FAULT_NOEXCEPT;
 
-FAULT_EXPORT FaultInitResult faultInit(const FaultConfig* config) FAULT_NOEXCEPT;
+FAULT_EXPORT FaultInitResult fault_init(const FaultConfig* config) FAULT_NOEXCEPT;
 
 // Stores shutdown request, returning wether the request had already been made before or by another
 // thread concurrently.
 // @Note Thread-safe
-FAULT_EXPORT bool faultSetShutdownRequest() FAULT_NOEXCEPT;
+FAULT_EXPORT bool fault_set_shutdown_request() FAULT_NOEXCEPT;
 
 // Returns wether any shutdown request has been made.
-FAULT_NODISCARD FAULT_EXPORT bool faultHasShutdownRequest() FAULT_NOEXCEPT;
+FAULT_NODISCARD FAULT_EXPORT bool fault_has_shutdown_request() FAULT_NOEXCEPT;
 
-FAULT_NODISCARD FAULT_EXPORT bool faultCanSafeTraceBeCollected() FAULT_NOEXCEPT;
+FAULT_NODISCARD FAULT_EXPORT bool fault_can_safetrace_becollected() FAULT_NOEXCEPT;
 
-FAULT_NORETURN FAULT_EXPORT void faultPanic(const char* message);
+FAULT_NORETURN FAULT_EXPORT void fault_panic(const char* message);
 
-FAULT_NORETURN FAULT_EXPORT void faultAssertionFailure(const char* expr, const char* file,
-                                                       uint32_t line, const char* func,
-                                                       const char* userMsg);
+FAULT_NORETURN FAULT_EXPORT void fault_assertion_failure(const char* expr, const char* file,
+                                                         uint32_t line, const char* func,
+                                                         const char* userMsg);
 
-static inline void faultVerify(bool cond, const char* message) {
+static inline void fault_verify(bool cond, const char* message) {
     if (FAULT_UNLIKELY(!(cond))) {
-        faultPanic(message);
+        fault_panic(message);
         FAULT_UNREACHABLE();
     }
 }
@@ -92,12 +92,12 @@ static inline void faultVerify(bool cond, const char* message) {
 #ifndef __cplusplus
 
 #define FAULT_EXPECT_AT_IMPL(cond, ...) \
-    faultAssertionFailure(#cond, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+    fault_assertion_failure(#cond, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 
 #if FAULT_USE_LOCATIONS
 #define FAULT_EXPECT_IMPL(cond, ...) FAULT_EXPECT_AT_IMPL(#cond, ##__VA_ARGS__)
 #else
-#define FAULT_EXPECT_IMPL(cond, ...) faultVerify(false, ##__VA_ARGS__)
+#define FAULT_EXPECT_IMPL(cond, ...) fault_verify(false, ##__VA_ARGS__)
 #endif
 #endif
 

@@ -52,7 +52,7 @@
 #include "fault/config.h"
 
 #define FAULT_EXPECT_AT_IMPL(cond, ...) \
-    ::fault::assertionFailure(#cond, std::source_location::current(), ##__VA_ARGS__)
+    ::fault::assertion_failure(#cond, std::source_location::current(), ##__VA_ARGS__)
 
 #if FAULT_USE_LOCATIONS
 #define FAULT_EXPECT_IMPL(cond, ...) FAULT_EXPECT_AT_IMPL(cond, ##__VA_ARGS__)
@@ -60,16 +60,16 @@
 #define FAULT_EXPECT_IMPL(cond, ...) ::fault::verify(false, ##__VA_ARGS__)
 #endif
 
-#include "fault/attributes.h"
-#include "fault/fault.h"
-#include "fault/fault_export.h"
-
 #include <cstdint>
 #include <optional>
 #include <source_location>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <fault/attributes.h>
+#include <fault/fault.h>
+#include <fault/fault_export.h>
 
 namespace fault {
 
@@ -157,13 +157,13 @@ FAULT_EXPORT InitResult init(const Config& config = {}) noexcept;
  *
  * @return returning wether this is the first request made.
  */
-FAULT_EXPORT bool setShutdownRequest() noexcept;
+FAULT_EXPORT bool set_shutdown_request() noexcept;
 
 /**
  * @brief Returns wether any shutdown request has been made.
  *
  */
-[[nodiscard]] FAULT_EXPORT bool hasShutdownRequest() noexcept;
+[[nodiscard]] FAULT_EXPORT bool has_shutdown_request() noexcept;
 
 /**
  * @brief Returns wether a signal safe object trace can be collected. If false and option to
@@ -171,7 +171,7 @@ FAULT_EXPORT bool setShutdownRequest() noexcept;
  * Windows exception handlers
  *
  */
-[[nodiscard]] FAULT_EXPORT bool canSafeTraceBeCollected() noexcept;
+[[nodiscard]] FAULT_EXPORT bool can_safetrace_becollected() noexcept;
 
 // Use this to immediately shutdown the application and perform similar actions as the fault
 // handlers, such as error message to stderr, fatal popup and write report.
@@ -198,7 +198,7 @@ FAULT_EXPORT bool setShutdownRequest() noexcept;
  * @param loc source location (file, line, function name)
  * @param userMsg user provided message
  */
-[[noreturn]] FAULT_EXPORT void assertionFailure(
+[[noreturn]] FAULT_EXPORT void assertion_failure(
     std::string_view expr, std::source_location loc = std::source_location::current(),
     std::string_view userMsg = {});
 
@@ -224,10 +224,10 @@ inline void verify(bool cond, std::string_view userMsg = {}) {
  * @param userMsg user message to be displayed & logged
  * @param loc location metadata to be displayed & logged
  */
-inline void expectAt(bool cond, std::string_view userMsg = {},
-                     std::source_location loc = std::source_location::current()) {
+inline void expect_at(bool cond, std::string_view userMsg = {},
+                      std::source_location loc = std::source_location::current()) {
     if (!cond) [[unlikely]] {
-        assertionFailure("?", loc, userMsg);
+        assertion_failure("?", loc, userMsg);
         FAULT_UNREACHABLE();
     }
 }
@@ -248,7 +248,7 @@ inline void expect(bool cond, std::string_view userMsg = {}
 ) {
     if (!cond) {
 #if FAULT_USE_LOCATIONS
-        expectAt(false, userMsg, loc);
+        expect_at(false, userMsg, loc);
 #else
         verify(false, userMsg);
 #endif
