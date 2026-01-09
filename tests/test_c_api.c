@@ -2,6 +2,12 @@
 
 #include <fault/fault.h>
 
+void infinite_recursion() {
+    volatile char buffer[256];
+    infinite_recursion();
+    buffer[0] = 0;
+}
+
 int main() {
     FaultConfig config = fault_get_default_config();
     config.appName = "MyApp";
@@ -13,7 +19,8 @@ int main() {
         printf("Failed to init libfault\n");
         return 1;
     }
-    fault_verify(2 == 1, "Logic failure in C");
+
+    infinite_recursion();  // Triggers seg fault on linux
 
     printf("C API test passed\n");
     return 0;

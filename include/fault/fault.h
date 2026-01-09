@@ -23,6 +23,7 @@ const char* const kDefaultErrorMessage =
 typedef struct SignalSettings {
     bool enable;
     bool raiseDefaultAfterwards;
+    bool storeShutdownRequests;
 } SignalSettings;
 
 typedef struct PanicSettings {
@@ -35,13 +36,14 @@ typedef struct FaultConfig {
     const char* appName;
     const char* buildID;
     const char* crashDir;
-    const char* reportFileName;
+    const char* reportBaseFileName;
     bool prefixDateOnFilename;
     const char* baseErrorMsg;
     bool showPopUp;
     bool printMsgToStdErr;
     bool useUnsafeStacktraceOnSignalFallback;
     bool resolveNonSignalTrace;
+    bool generateMiniDumpWindows;
     struct SignalSettings signal;
     struct PanicSettings panic;
 } FaultConfig;
@@ -72,13 +74,12 @@ FAULT_EXPORT bool fault_set_shutdown_request() FAULT_NOEXCEPT;
 // Returns wether any shutdown request has been made.
 FAULT_NODISCARD FAULT_EXPORT bool fault_has_shutdown_request() FAULT_NOEXCEPT;
 
-FAULT_NODISCARD FAULT_EXPORT bool fault_can_safetrace_becollected() FAULT_NOEXCEPT;
+FAULT_NODISCARD FAULT_EXPORT bool fault_can_collect_safe_trace() FAULT_NOEXCEPT;
 
 FAULT_NORETURN FAULT_EXPORT void fault_panic(const char* message);
 
-FAULT_NORETURN FAULT_EXPORT void fault_assertion_failure(const char* expr, const char* file,
-                                                         uint32_t line, const char* func,
-                                                         const char* userMsg);
+FAULT_NORETURN FAULT_EXPORT void fault_panic_loc(const char* expr, const char* file, uint32_t line,
+                                                 const char* func, const char* userMsg);
 
 static inline void fault_verify(bool cond, const char* message) {
     if (FAULT_UNLIKELY(!(cond))) {
@@ -89,11 +90,12 @@ static inline void fault_verify(bool cond, const char* message) {
 
 // NOLINTBEGIN
 
-#ifndef __cplusplus
-
+#ifndef FAULT_EXPECT_AT_IMPL
 #define FAULT_EXPECT_AT_IMPL(cond, ...) \
-    fault_assertion_failure(#cond, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+    fault_panic_loc(#cond, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+#endif
 
+#ifndef FAULT_EXPECT_IMPL
 #if FAULT_USE_LOCATIONS
 #define FAULT_EXPECT_IMPL(cond, ...) FAULT_EXPECT_AT_IMPL(#cond, ##__VA_ARGS__)
 #else
@@ -101,12 +103,12 @@ static inline void fault_verify(bool cond, const char* message) {
 #endif
 #endif
 
-#define FAULT_EXPECT_AT(cond, ...)                  \
-    do {                                            \
-        if (FAULT_UNLIKELY(!(cond))) {              \
-            FAULT_EXPECT_IMPL(cond, ##__VA_ARGS__); \
-            FAULT_UNREACHABLE();                    \
-        }                                           \
+#define FAULT_EXPECT_AT(cond, ...)                     \
+    do {                                               \
+        if (FAULT_UNLIKELY(!(cond))) {                 \
+            FAULT_EXPECT_AT_IMPL(cond, ##__VA_ARGS__); \
+            FAULT_UNREACHABLE();                       \
+        }                                              \
     } while (0)
 
 #define FAULT_EXPECT(cond, ...)                     \

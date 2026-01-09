@@ -1,5 +1,6 @@
 #include "fault/fault.hpp"
 
+#include "fault/attributes.h"
 #include "fault/fault.h"
 
 #include <array>
@@ -33,7 +34,6 @@
 #define WIN32_LEAN_AND_MEAN
 // clang-format off
 #include <windows.h>
-// clang-format on
 #include <consoleapi.h>
 #include <errhandlingapi.h>
 #include <excpt.h>
@@ -41,6 +41,8 @@
 #include <processthreadsapi.h>
 #include <strsafe.h>
 #include <synchapi.h>
+#include <dbghelp.h>
+// clang-format on
 #else
 #include <cstdio>
 #include <fcntl.h>
@@ -318,8 +320,8 @@ bool verifyWriteAccess(const std::string& p) noexcept {
 }
 
 ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fileName,
-                               std::span<char> writeDir, bool prefixDate,
-                               const std::tm& timeInfo) noexcept {
+                               std::span<char> writeDir, bool prefixDate, const std::tm& timeInfo,
+                               std::string_view extension) noexcept {
     try {
         std::string finalPathStr;
         std::string fullFileName;
@@ -328,7 +330,7 @@ ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fileNam
             const auto writtenSize =
                 std::strftime(tempTime.data(), tempTime.size(), "%Y-%m-%d_%H-%M-%S_", &timeInfo);
             tempTime[writtenSize] = '\0';
-            fullFileName += tempTime.data();  // std::format("{:%Y-%m-%d_%H-%M-%S}_", now);
+            fullFileName += tempTime.data();
         }
         fullFileName += std::string{fileName};
         std::error_code ec;
@@ -338,12 +340,15 @@ ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fileNam
             std::filesystem::create_directories(dir, ec);
         }
         if (!ec) {
-            finalPathStr = (dir / fullFileName).string();
+            auto finalPath = dir / fullFileName;
+            finalPath.replace_extension(extension);
+            finalPathStr = finalPath.string();
         } else {
             ec.clear();
             auto fallbackPath = std::filesystem::absolute(fullFileName, ec);
+            fallbackPath.replace_filename(extension);
             if (ec) {
-                finalPathStr = fullFileName;
+                return ConfigWarning::kInvalidPath;
             } else {
                 finalPathStr = std::move(fallbackPath).string();
             }
@@ -394,6 +399,7 @@ std::tm timeInit() {
 }
 
 struct Config {
+    static constexpr int kAlarmSeconds{3};
     struct TerminateSettings {
         bool enable{true};
         std::optional<TerminateHook> userHook{std::nullopt};
@@ -401,11 +407,16 @@ struct Config {
     struct SignalSettings {
         bool enable{true};
         bool raiseDefaultAfterwards{false};
+        bool enableShutdownRequest{true};
     };
     struct PanicSettings {
         bool printMsgToStdErr{true};
         bool showPopUp{true};
         bool writeReport{true};
+    };
+    struct Windows {
+        static inline bool canWriteDump{false};
+        static inline std::array<char, 512> dumpPath{"crash_dump.dmp"};
     };
     std::array<char, 512> baseErrorMessage{'\0'};
     std::array<char, 128> appName{'\0'};
@@ -431,10 +442,18 @@ struct Config {
         utils::strSafeCopy(appName.data(), appName.size(), config.appName);
         utils::strSafeCopy(buildID.data(), buildID.size(), config.buildID);
         const auto fileNameStr =
-            config.reportFileName.empty() ? "crash_report.log" : config.reportFileName;
+            config.reportBaseFileName.empty() ? "crash_report" : config.reportBaseFileName;
         const auto tmInfo = timeInit();
-        const auto reportDirFlags = utils::setCrashWriteDir(config.crashDir, fileNameStr, crashPath,
-                                                            config.prefixDateOnFilename, tmInfo);
+        const auto reportDirFlags = utils::setCrashWriteDir(
+            config.crashDir, fileNameStr, crashPath, config.prefixDateOnFilename, tmInfo, ".log");
+#if defined(_WIN32)
+        if (config.generateMiniDumpWindows &&
+            utils::setCrashWriteDir(config.crashDir, "crash_dump", Windows::dumpPath,
+                                    config.prefixDateOnFilename, tmInfo,
+                                    ".dmp") == ConfigWarning::kNone) {
+            Windows::canWriteDump = true;
+        }
+#endif
         result.warnings = result.warnings | reportDirFlags;
         if (reportDirFlags != ConfigWarning::kNone) {
             result.success = false;
@@ -445,7 +464,8 @@ struct Config {
         useUnsafeStacktraceOnSignalFallback = config.useUnsafeStacktraceOnSignalFallback;
         resolveNonSignalTrace = config.resolveNonSignalTrace;
         signal = SignalSettings{.enable = config.signal.enable,
-                                .raiseDefaultAfterwards = config.signal.raiseDefaultAfterwards};
+                                .raiseDefaultAfterwards = config.signal.raiseDefaultAfterwards,
+                                .enableShutdownRequest = config.signal.storeShutdownRequests};
         terminate = TerminateSettings{.enable = config.terminate.enable,
                                       .userHook = config.terminate.userHook};
         panic = PanicSettings{.printMsgToStdErr = config.panic.printMsgToStdErr,
@@ -536,7 +556,9 @@ bool writeReport(std::string_view errContext,
 #endif
         return false;
     }
-    utils::safePrint("Build ID: ", fd);
+    utils::safePrint("App Name: ", fd);
+    utils::safePrint(config.appName.data(), fd);
+    utils::safePrint("\nBuild ID: ", fd);
     utils::safePrint(config.buildID.data(), fd);
     utils::safePrint("\nInit Timestamp: ", fd);
     utils::safePrint(_internal::gInitTimeStr.data(), fd);
@@ -565,7 +587,7 @@ bool writeReport(std::string_view errContext,
         const auto resolvedTraceStr = cpptrace::generate_trace().to_string();
         utils::safePrint(resolvedTraceStr.c_str(), fd);
         utils::safePrint("\n(Regular resolved stacktrace used)\n", fd);
-    } else if (can_safetrace_becollected()) {
+    } else if (can_collect_safe_trace()) {
         // Program is inside restrictive signal handling (Possibly linux posix). Collect
         // stacktrace and print safely
         std::array<cpptrace::frame_ptr, 128> buffer{};
@@ -611,8 +633,7 @@ void showPopUp(const char* title, const char* message) noexcept {
     static std::atomic<bool> hasBeenHandled{false};
     bool expected{false};
     if (!hasBeenHandled.compare_exchange_strong(expected, true)) {
-        ExitHandler::parkThreadForever();
-        FAULT_UNREACHABLE();
+        return;
     }
 #ifdef _WIN32
     std::array<wchar_t, 128> titleWide{};
@@ -656,17 +677,6 @@ void safeAppendVEHInfo(struct _EXCEPTION_POINTERS* pExc, char* buffer, std::size
     const EXCEPTION_RECORD& rec = *pExc->ExceptionRecord;
     const CONTEXT& ctx = *pExc->ContextRecord;
     std::array<char, 19> regBuff{};
-
-    utils::safeAppend(buffer, offset, capacity, "\nException Code: ");
-    utils::safeWriteHex(static_cast<std::uintptr_t>(rec.ExceptionCode), regBuff);
-    utils::safeAppend(buffer, offset, capacity, regBuff.data());
-
-    // If it's an Access Violation, ExceptionInformation[1] is the faulting address
-    if (rec.ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec.NumberParameters >= 2) {
-        utils::safeAppend(buffer, offset, capacity, "\nFault Address: ");
-        utils::safeWriteHex(static_cast<std::uintptr_t>(rec.ExceptionInformation[1]), regBuff);
-        utils::safeAppend(buffer, offset, capacity, regBuff.data());
-    }
 
     // 'Where'
     utils::safeAppend(buffer, offset, capacity, "\n\nRegisters (x64):");
@@ -726,19 +736,20 @@ struct WindowsHandling {
     static inline std::size_t offsetForMsg{0};
     static inline std::atomic<bool> hasAnyCodeBeenReceived{false};
     static inline std::atomic<bool> reportDone{false};
+    static inline std::atomic<bool> popUpReached{false};
+    static inline bool wasDumpWritten{false};
     static inline bool showPopUp{true};
     static thread_local inline std::sig_atomic_t tryCount{0};
     static inline HANDLE hCrashEvent{nullptr};
     static inline HANDLE hWatchdogThread{nullptr};
-    static constexpr DWORD kTimerMilliseconds{3000};
+    static constexpr DWORD kTimerMilliseconds{
+        static_cast<DWORD>(_internal::Config::kAlarmSeconds * 1000)};
 
-    static DWORD WINAPI watchdogFunction(LPVOID /*lpParam*/) noexcept {
-        WaitForSingleObject(
-            hCrashEvent,
-            INFINITE);  // Waiting indefinitely until it is woken by the crashing process
-        Sleep(kTimerMilliseconds);
-        if (WindowsHandling::reportDone) {
-            return EXIT_FAILURE;
+    static void popUpAction(bool exitAftewards = false) noexcept {
+        bool expected{false};
+        if (!popUpReached.compare_exchange_strong(expected, true)) {
+            ExitHandler::parkThreadForever();
+            FAULT_UNREACHABLE();
         }
         if (WindowsHandling::showPopUp) {
             if (WindowsHandling::offsetForMsg >=
@@ -750,7 +761,22 @@ struct WindowsHandling {
                 ExitHandler::showPopUp("Fatal Error", _internal::config.baseErrorMessage.data());
             }
         }
-        ExitHandler::shutdown();
+        if (exitAftewards) {
+            ExitHandler::shutdown();
+            FAULT_UNREACHABLE();
+        }
+    }
+
+    static DWORD WINAPI watchdogFunction(LPVOID /*lpParam*/) noexcept {
+        WaitForSingleObject(
+            hCrashEvent,
+            INFINITE);  // Waiting indefinitely until it is woken by the crashing process
+        Sleep(kTimerMilliseconds);
+        if (WindowsHandling::reportDone) {
+            return EXIT_FAILURE;
+        }
+        constexpr bool kExit{true};
+        WindowsHandling::popUpAction(kExit);
         FAULT_UNREACHABLE();
     }
 
@@ -765,22 +791,37 @@ struct WindowsHandling {
             }
             // Same thread that was working on the report triggered handler again, skip report and
             // go to popup + shutdown
-            if (WindowsHandling::offsetForMsg >=
-                std::strlen(_internal::config.baseErrorMessage.data())) {
-                WindowsHandling::finalBuffer[WindowsHandling::offsetForMsg] = '\0';
-                if (WindowsHandling::showPopUp) {
-                    ExitHandler::showPopUp(WindowsHandling::titleBuffer.data(),
-                                           WindowsHandling::finalBuffer.data());
-                }
-                return false;
-            }
-            if (WindowsHandling::showPopUp) {
-                ExitHandler::showPopUp("Fatal Error", _internal::config.baseErrorMessage.data());
-            }
+            constexpr bool kExit{false};
+            WindowsHandling::popUpAction(kExit);
             return false;
         }
         ++WindowsHandling::tryCount;
         return true;
+    }
+
+    static bool writeMiniDump(EXCEPTION_POINTERS* exceptionPtrs = nullptr) {
+        HANDLE hFile = CreateFileA(_internal::Config::Windows::dumpPath.data(), GENERIC_WRITE, 0,
+                                   NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (hFile == INVALID_HANDLE_VALUE) {
+            return false;
+        }
+
+        MINIDUMP_EXCEPTION_INFORMATION mei;
+        MINIDUMP_EXCEPTION_INFORMATION* pMei{nullptr};
+
+        if (exceptionPtrs) {
+            mei.ThreadId = GetCurrentThreadId();
+            mei.ExceptionPointers = exceptionPtrs;
+            mei.ClientPointers = FALSE;
+            pMei = &mei;
+        }
+
+        const auto res = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile,
+                                           MiniDumpNormal, pMei, nullptr, nullptr);
+
+        CloseHandle(hFile);
+
+        return res;
     }
 
     static void doWriteReport(std::size_t size, bool printToStderr, bool writeReport,
@@ -805,7 +846,13 @@ struct WindowsHandling {
                                   _internal::config.crashPath.data());
             } else if (writeReport) {
                 utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
-                                  "\nCould not generate report.\n");
+                                  "\nCould not generate report.");
+            }
+            if (WindowsHandling::wasDumpWritten) {
+                utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
+                                  "\nMini dump generated at: ");
+                utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
+                                  _internal::Config::Windows::dumpPath.data());
             }
             utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
                               "\n=== [FAULT END] ===\n");
@@ -814,7 +861,7 @@ struct WindowsHandling {
         WindowsHandling::reportDone = true;
     }
 
-    static void writeSummaryMessageToBuffer(DWORD code, std::string_view msg,
+    static void writeSummaryMessageToBuffer(struct _EXCEPTION_POINTERS* pExc, std::string_view msg,
                                             std::size_t& offset) noexcept {
         {
             std::size_t titleOffset{0};
@@ -828,37 +875,65 @@ struct WindowsHandling {
         std::size_t remaining{0};
         if (!SUCCEEDED(StringCchPrintfExA(
                 WindowsHandling::finalBuffer.data(), WindowsHandling::finalBuffer.size(),
-                &pszDestEnd, &remaining, 0,
-                "%s\n\nError Code: "
-                "0x%08X\nDescription: %s\n\n",
-                _internal::config.baseErrorMessage.data(), code, msg.data(), msg.size()))) {
+                &pszDestEnd, &remaining, 0, "%s\n\nDescription: %s\n",
+                _internal::config.baseErrorMessage.data(), msg.data(), msg.size()))) {
             utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
                               WindowsHandling::finalBuffer.size(),
                               _internal::config.baseErrorMessage.data());
             utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                              WindowsHandling::finalBuffer.size(), "\n\n");
+                              WindowsHandling::finalBuffer.size(), "\n");
         } else {
             offset = pszDestEnd - WindowsHandling::finalBuffer.data();
         }
+        if ((pExc != nullptr) && (pExc->ExceptionRecord != nullptr)) {
+            const EXCEPTION_RECORD& rec = *pExc->ExceptionRecord;
+
+            std::array<char, 19> regBuff{};
+
+            utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
+                              WindowsHandling::finalBuffer.size(), "Exception Code: ");
+            utils::safeWriteHex(static_cast<std::uintptr_t>(rec.ExceptionCode), regBuff);
+            utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
+                              WindowsHandling::finalBuffer.size(), regBuff.data());
+            utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
+                              WindowsHandling::finalBuffer.size(), "\n");
+            // If it's an Access Violation, ExceptionInformation[1] is the faulting address
+            if (rec.ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec.NumberParameters >= 2) {
+                utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
+                                  WindowsHandling::finalBuffer.size(), "Fault Address: ");
+                utils::safeWriteHex(static_cast<std::uintptr_t>(rec.ExceptionInformation[1]),
+                                    regBuff);
+                utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
+                                  WindowsHandling::finalBuffer.size(), regBuff.data());
+                utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
+                                  WindowsHandling::finalBuffer.size(), "\n");
+            }
+        }
+        utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
+                          WindowsHandling::finalBuffer.size(), "\n");
         utils::writePreciseTimeSafe(WindowsHandling::finalBuffer.data(), offset,
                                     WindowsHandling::finalBuffer.size(),
                                     _internal::gInitTimeStr.data(), _internal::gInitTimeRaw.tvSec,
                                     _internal::gInitTimeRaw.tvNsec);
+        WindowsHandling::offsetForMsg = offset;
+        safeAppendVEHInfo(pExc, WindowsHandling::finalBuffer.data(), offset,
+                          WindowsHandling::finalBuffer.size());
     }
 
-    static void commonActions(std::size_t offset, bool printToStderr, bool writeReport,
+    static void commonActions(PEXCEPTION_POINTERS exceptionInfo, std::size_t offset,
+                              bool printToStderr, bool writeReport,
                               const std::optional<cpptrace::object_trace>& exceptionTrace,
                               bool resolveTrace) {
+        if (_internal::Config::Windows::canWriteDump) {
+            WindowsHandling::wasDumpWritten = WindowsHandling::writeMiniDump(exceptionInfo);
+        }
         if (hCrashEvent != nullptr && hCrashEvent != INVALID_HANDLE_VALUE) {
             SetEvent(hCrashEvent);
         }
         WindowsHandling::doWriteReport(offset, printToStderr, writeReport, exceptionTrace,
                                        resolveTrace);
-        WindowsHandling::finalBuffer[WindowsHandling::offsetForMsg] = '\0';
-        if (WindowsHandling::showPopUp) {
-            ExitHandler::showPopUp(WindowsHandling::titleBuffer.data(),
-                                   WindowsHandling::finalBuffer.data());
-        }
+        constexpr bool kExit{false};
+        WindowsHandling::popUpAction(kExit);
     }
 
     static void windowsCommonProcessSignalEvent(PEXCEPTION_POINTERS exceptionInfo, DWORD code,
@@ -868,14 +943,11 @@ struct WindowsHandling {
         }
         WindowsHandling::showPopUp = _internal::config.showPopUp;
         std::size_t offset{0};
-        WindowsHandling::writeSummaryMessageToBuffer(code, description, offset);
-        WindowsHandling::offsetForMsg = offset;
-        safeAppendVEHInfo(exceptionInfo, WindowsHandling::finalBuffer.data(), offset,
-                          WindowsHandling::finalBuffer.size());
+        WindowsHandling::writeSummaryMessageToBuffer(exceptionInfo, description, offset);
         constexpr bool kWriteReport{true};
         constexpr bool kResolveTrace{false};
-        WindowsHandling::commonActions(offset, _internal::config.printMsgToStdErr, kWriteReport,
-                                       std::nullopt, kResolveTrace);
+        WindowsHandling::commonActions(exceptionInfo, offset, _internal::config.printMsgToStdErr,
+                                       kWriteReport, std::nullopt, kResolveTrace);
     }
 
     static void initHandles() noexcept {
@@ -933,15 +1005,15 @@ struct WindowsHandling {
         }
         WindowsHandling::showPopUp = showPopUp;
         std::size_t offset{0};
-        WindowsHandling::writeSummaryMessageToBuffer(code, msg, offset);
-        WindowsHandling::offsetForMsg = offset;
-        WindowsHandling::commonActions(offset, printToStderr, writeReport, exceptionTrace,
-                                       resolveTrace);
+        constexpr PEXCEPTION_POINTERS kPExceptionInfo{nullptr};
+        WindowsHandling::writeSummaryMessageToBuffer(kPExceptionInfo, msg, offset);
+        WindowsHandling::commonActions(kPExceptionInfo, offset, printToStderr, writeReport,
+                                       exceptionTrace, resolveTrace);
         ExitHandler::shutdown(code);
         FAULT_UNREACHABLE();
     }
 
-    static void setup(bool enableHandlers) noexcept {
+    static void setup(bool enableHandlers, bool enableShutdownRequest) noexcept {
         constexpr auto kBytesToReserve = static_cast<std::size_t>(64U * 1024U);
         auto stackSize = static_cast<ULONG>(kBytesToReserve);
         SetThreadStackGuarantee(&stackSize);
@@ -951,6 +1023,10 @@ struct WindowsHandling {
         if (enableHandlers) {
             SetUnhandledExceptionFilter(WindowsHandling::windowsExceptionHandler);
             std::signal(SIGABRT, WindowsHandling::winAbortHandler);
+        }
+        if (enableShutdownRequest) {
+            std::signal(SIGINT, [](int /*sig*/) { fault::set_shutdown_request(); });
+            std::signal(SIGTERM, [](int /*sig*/) { fault::set_shutdown_request(); });
         }
     }
 };
@@ -1134,8 +1210,7 @@ struct LinuxHandling {
     static inline std::atomic<bool> hasAnySignalBeenReceived{false};
     static thread_local inline std::sig_atomic_t tryCount{};
     static inline std::sig_atomic_t signal{-1};
-    // static inline bool writeToStdErr{true};
-    // static inline bool writeReport{true};
+    static inline std::atomic<bool> popUpReached{false};
     static inline bool showPopUp{true};
     static inline bool shouldReRaiseSignal{true};
 
@@ -1160,7 +1235,14 @@ struct LinuxHandling {
             kill(LinuxHandling::tracePid, SIGKILL);
             LinuxHandling::tracePid = -1;
         }
-        if (LinuxHandling::offsetForMsg >= std::strlen(_internal::config.baseErrorMessage.data())) {
+        bool expected{false};
+        if (!LinuxHandling::popUpReached.compare_exchange_strong(expected, true))
+            [[unlikely]] {  // In case alarm and report would trigger concurrently
+            ExitHandler::parkThreadForever();
+            FAULT_UNREACHABLE();
+        }
+        if (LinuxHandling::offsetForMsg >= std::strlen(_internal::config.baseErrorMessage.data()))
+            [[likely]] {
             LinuxHandling::finalBuffer[LinuxHandling::offsetForMsg] = '\0';
             if (LinuxHandling::showPopUp) {
                 ExitHandler::showPopUp(LinuxHandling::titleBuffer.data(),
@@ -1282,12 +1364,13 @@ struct LinuxHandling {
 
     [[noreturn]] static void doWriteToFile(
         std::size_t size, bool printToStderr, bool writeReport,
-        const cpptrace::object_trace* exceptionTrace = nullptr) noexcept {
-        const auto written =
-            writeReport
-                ? ExitHandler::writeReport(
-                      std::string_view{LinuxHandling::finalBuffer.data(), size}, exceptionTrace)
-                : false;
+        const std::optional<cpptrace::object_trace>& exceptionTrace = std::nullopt,
+        bool resolveTrace = false) noexcept {
+        const auto written = writeReport
+                                 ? ExitHandler::writeReport(
+                                       std::string_view{LinuxHandling::finalBuffer.data(), size},
+                                       exceptionTrace, resolveTrace)
+                                 : false;
         if (printToStderr) {
             std::array<char, 2048> stdErrBfr{};
             std::size_t offset{0};
@@ -1343,12 +1426,16 @@ struct LinuxHandling {
         LinuxHandling::writeSummaryMessageToBuffer(LinuxHandling::signal, info, offset);
         LinuxHandling::offsetForMsg = offset;
         LinuxHandling::writeReportDetailsToBuffer(static_cast<const ucontext_t*>(uctx), offset);
-        LinuxHandling::commonActions(offset, _internal::config.printMsgToStdErr, true, nullptr);
+        constexpr bool kResolveTrace{false};
+        constexpr std::optional<cpptrace::object_trace> kTrace{std::nullopt};
+        LinuxHandling::commonActions(offset, _internal::config.printMsgToStdErr, true, kTrace,
+                                     kResolveTrace);
         FAULT_UNREACHABLE();
     }
 
-    [[noreturn]] static void commonActions(std::size_t offset, bool printToStderr, bool writeReport,
-                                           const cpptrace::object_trace* exceptionTrace) {
+    [[noreturn]] static void commonActions(
+        std::size_t offset, bool printToStderr, bool writeReport,
+        const std::optional<cpptrace::object_trace>& exceptionTrace, bool resolveTrace) {
         struct sigaction sa{};
         sigfillset(&sa.sa_mask);
         sa.sa_handler = LinuxHandling::popUpAndExit;
@@ -1357,10 +1444,11 @@ struct LinuxHandling {
         sigaction(SIGALRM, &sa, nullptr);    // Protect against deadlocks
         LinuxHandling::tracePid = _Fork();   // Async signal safe.
         if (LinuxHandling::tracePid == 0) {  // Child process
-            LinuxHandling::doWriteToFile(offset, printToStderr, writeReport, exceptionTrace);
+            LinuxHandling::doWriteToFile(offset, printToStderr, writeReport, exceptionTrace,
+                                         resolveTrace);
             FAULT_UNREACHABLE();
         } else if (LinuxHandling::tracePid > 0) {  // Parent process
-            alarm(3);
+            alarm(_internal::Config::kAlarmSeconds);
             waitpid(LinuxHandling::tracePid, nullptr,
                     0);  // Wait for trace collection, or until alarm hits
             alarm(0);
@@ -1378,21 +1466,23 @@ struct LinuxHandling {
         return LinuxHandling::hasAnySignalBeenReceived;
     }
 
-    [[noreturn]] static void fromTerminate(std::string_view msg, int code, bool printToStderr,
-                                           bool writeReport,
-                                           const cpptrace::object_trace* exceptionTrace,
-                                           bool showPopUp) {
+    [[noreturn]] static void fromTerminate(
+        std::string_view msg, int code, bool printToStderr, bool writeReport,
+        const std::optional<cpptrace::object_trace>& exceptionTrace, bool showPopUp,
+        bool resolveTrace) {
         LinuxHandling::checkPermissions();
         LinuxHandling::signal = code;
         LinuxHandling::showPopUp = showPopUp;
-        LinuxHandling::shouldReRaiseSignal = false;
+        LinuxHandling::shouldReRaiseSignal = true;
         std::size_t offset{0};
         LinuxHandling::writeSummaryMessageToBuffer(msg, offset);
         LinuxHandling::offsetForMsg = offset;
-        LinuxHandling::commonActions(offset, printToStderr, writeReport, exceptionTrace);
+        LinuxHandling::commonActions(offset, printToStderr, writeReport, exceptionTrace,
+                                     resolveTrace);
+        FAULT_UNREACHABLE();
     }
 
-    static void setup(bool enableHandlers) noexcept {
+    static void setup(bool enableHandlers, bool enableShutdownRequest) noexcept {
         ExitHandler::canReadZenityPath = 0;
         ExitHandler::canReadZenityPath = static_cast<int>(findProgramInPath(
             "zenity", ExitHandler::zenityPath.data(), ExitHandler::zenityPath.size()));
@@ -1420,9 +1510,10 @@ struct LinuxHandling {
         for (int s : sigs) {
             sigaction(s, &sa, nullptr);
         }
-
-        std::signal(SIGINT, [](int /*sig*/) { fault::setShutdownRequest(); });
-        std::signal(SIGTERM, [](int /*sig*/) { fault::setShutdownRequest(); });
+        if (enableShutdownRequest) {
+            std::signal(SIGINT, [](int /*sig*/) { fault::set_shutdown_request(); });
+            std::signal(SIGTERM, [](int /*sig*/) { fault::set_shutdown_request(); });
+        }
     }
 };
 #endif
@@ -1492,7 +1583,8 @@ struct TerminateHandling {
             // need trace from current exception to get full (or at least better) snapshot
             auto exceptionTrace =
                 cpptrace::raw_trace_from_current_exception().resolve_object_trace();
-            if (!exceptionTrace.frames.empty()) {  // Probably redundant
+            if (!exceptionTrace.frames.empty()) {  // Will only exist when cpptrace intercepted it
+                                                   // (implies consumer uses cpptrace try/catch)
                 trace.frames.push_back(
                     cpptrace::object_frame{.raw_address = 0,
                                            .object_address = 0,
@@ -1529,8 +1621,7 @@ struct TerminateHandling {
         }
         constexpr bool kWriteReport{true};
         TerminateHandling::controlledShutdown(userMessage, _internal::config.printMsgToStdErr,
-                                              kWriteReport, trace, _internal::config.showPopUp,
-                                              _internal::config.resolveNonSignalTrace);
+                                              kWriteReport, trace, _internal::config.showPopUp);
         FAULT_UNREACHABLE();
     }
 
@@ -1540,16 +1631,17 @@ struct TerminateHandling {
     }
     [[noreturn]] static void controlledShutdown(
         std::string_view message, bool printToStderr, bool writeReport,
-        const std::optional<cpptrace::object_trace>& exceptionTrace, bool showPopUp,
-        bool resolveTrace = false) {
+        const std::optional<cpptrace::object_trace>& exceptionTrace, bool showPopUp) {
 #if defined(__linux__)
         constexpr int kTerminateCode{SIGABRT};
         LinuxHandling::fromTerminate(message, kTerminateCode, printToStderr, writeReport,
-                                     exceptionTrace, showPopUp);
+                                     exceptionTrace, showPopUp,
+                                     _internal::config.resolveNonSignalTrace);
 #else
         constexpr int kTerminateCode{3};
         WindowsHandling::fromTerminate(message, kTerminateCode, printToStderr, writeReport,
-                                       exceptionTrace, showPopUp, resolveTrace);
+                                       exceptionTrace, showPopUp,
+                                       _internal::config.resolveNonSignalTrace);
 #endif
         FAULT_UNREACHABLE();
     }
@@ -1571,11 +1663,11 @@ void warmupCpptrace() noexcept {
     cpptrace::get_safe_object_frame(buffer[0], &frame);
 }
 
-void setup(bool enableHandlers) noexcept {
+void setup(bool enableHandlers, bool enableShutdownRequest) noexcept {
 #ifdef _WIN32
-    WindowsHandling::setup(enableHandlers);
+    WindowsHandling::setup(enableHandlers, enableShutdownRequest);
 #else
-    LinuxHandling::setup(enableHandlers);
+    LinuxHandling::setup(enableHandlers, enableShutdownRequest);
 #endif
 }
 
@@ -1587,7 +1679,7 @@ void doInit() {
     if (config.terminate.enable) {
         TerminateHandling::setup();
     }
-    setup(config.signal.enable);
+    setup(config.signal.enable, config.signal.enableShutdownRequest);
 }
 
 [[nodiscard]] InitResult tryInit(const Config& config) noexcept {
@@ -1618,7 +1710,7 @@ bool has_shutdown_request() noexcept {
     return shutdownRequest;
 }
 
-bool can_safetrace_becollected() noexcept {
+bool can_collect_safe_trace() noexcept {
     return cpptrace::can_signal_safe_unwind() && cpptrace::can_get_safe_object_frame();
 }
 
@@ -1631,23 +1723,23 @@ void panic(std::string_view message, const std::optional<ObjectTrace>& exception
     if (exceptionTrace.has_value()) {
         optCppObjTrace = utils::toCppTrace(*exceptionTrace);
     }
-    TerminateHandling::controlledShutdown(
-        message, _internal::config.panic.printMsgToStdErr, _internal::config.panic.writeReport,
-        optCppObjTrace, _internal::config.panic.showPopUp, _internal::config.resolveNonSignalTrace);
+    TerminateHandling::controlledShutdown(message, _internal::config.panic.printMsgToStdErr,
+                                          _internal::config.panic.writeReport, optCppObjTrace,
+                                          _internal::config.panic.showPopUp);
     FAULT_UNREACHABLE();
 }
 
-void assertion_failure(std::string_view expr, std::string_view file, std::uint32_t line,
-                       std::string_view func, std::string_view userMsg) {
+void panic_loc(std::string_view expr, std::string_view file, std::uint32_t line,
+               std::string_view func, std::string_view userMsg) {
     std::array<char, 2048> msg{};
     std::size_t offset{0};
-    utils::safeAppend(msg.data(), offset, msg.size(), "Assertion");
+    utils::safeAppend(msg.data(), offset, msg.size(), "Assertion ");
     if (!expr.empty()) {
-        utils::safeAppend(msg.data(), offset, msg.size(), " '");
         utils::safeAppend(msg.data(), offset, msg.size(), expr.data(), expr.size());
-        utils::safeAppend(msg.data(), offset, msg.size(), "'");
+        utils::safeAppend(msg.data(), offset, msg.size(), " Failed");
+    } else {
+        utils::safeAppend(msg.data(), offset, msg.size(), "Failed");
     }
-    utils::safeAppend(msg.data(), offset, msg.size(), "' Failed");
     if (!userMsg.empty()) {
         utils::safeAppend(msg.data(), offset, msg.size(), " | Message: ");
         utils::safeAppend(msg.data(), offset, msg.size(), userMsg.data(), userMsg.size());
@@ -1660,15 +1752,13 @@ void assertion_failure(std::string_view expr, std::string_view file, std::uint32
     utils::safeAppend(msg.data(), offset, msg.size(), func.data(), func.size());
 
     constexpr bool kWriteReport{true};
-    constexpr std::optional<cpptrace::object_trace> kNoExceptionTrace{std::nullopt};
-    TerminateHandling::controlledShutdown(
-        std::string_view{msg.data(), offset}, _internal::config.printMsgToStdErr, kWriteReport,
-        kNoExceptionTrace, _internal::config.showPopUp, _internal::config.resolveNonSignalTrace);
+    constexpr std::optional<ObjectTrace> kNoExceptionTrace{std::nullopt};
+    panic(std::string_view{msg.data(), offset}, kNoExceptionTrace);
     FAULT_UNREACHABLE();
 }
 
-void assertion_failure(std::string_view expr, std::source_location loc, std::string_view userMsg) {
-    assertion_failure(expr, loc.file_name(), loc.line(), loc.function_name(), userMsg);
+void panic_loc(std::string_view expr, std::source_location loc, std::string_view userMsg) {
+    panic_loc(expr, loc.file_name(), loc.line(), loc.function_name(), userMsg);
     FAULT_UNREACHABLE();
 }
 
@@ -1682,8 +1772,8 @@ void assertion_failure(std::string_view expr, std::source_location loc, std::str
 
 extern "C" {
 
-bool fault_can_safetrace_becollected() FAULT_NOEXCEPT {
-    return fault::can_safetrace_becollected();
+bool fault_can_collect_safe_trace() FAULT_NOEXCEPT {
+    return fault::can_collect_safe_trace();
 }
 
 FaultConfig fault_get_default_config() FAULT_NOEXCEPT {
@@ -1692,15 +1782,17 @@ FaultConfig fault_get_default_config() FAULT_NOEXCEPT {
         .appName = config.appName.data(),
         .buildID = config.buildID.data(),
         .crashDir = config.crashDir.data(),
-        .reportFileName = config.reportFileName.data(),
+        .reportBaseFileName = config.reportBaseFileName.data(),
         .prefixDateOnFilename = config.prefixDateOnFilename,
         .baseErrorMsg = config.baseErrorMsg.data(),
         .showPopUp = config.showPopUp,
         .printMsgToStdErr = config.printMsgToStdErr,
         .useUnsafeStacktraceOnSignalFallback = config.useUnsafeStacktraceOnSignalFallback,
         .resolveNonSignalTrace = config.resolveNonSignalTrace,
+        .generateMiniDumpWindows = config.generateMiniDumpWindows,
         .signal = {.enable = config.signal.enable,
-                   .raiseDefaultAfterwards = config.signal.raiseDefaultAfterwards},
+                   .raiseDefaultAfterwards = config.signal.raiseDefaultAfterwards,
+                   .storeShutdownRequests = config.signal.storeShutdownRequests},
         .panic = {.printMsgToStdErr = config.panic.printMsgToStdErr,
                   .showPopUp = config.panic.showPopUp,
                   .writeReport = config.panic.writeReport}};
@@ -1715,15 +1807,17 @@ FaultInitResult fault_init(const FaultConfig* config) FAULT_NOEXCEPT {
         .appName{fault::utils::getSafeView(config->appName)},
         .buildID{fault::utils::getSafeView(config->buildID)},
         .crashDir{fault::utils::getSafeView(config->crashDir)},
-        .reportFileName{fault::utils::getSafeView(config->reportFileName)},
+        .reportBaseFileName{fault::utils::getSafeView(config->reportBaseFileName)},
         .prefixDateOnFilename = config->prefixDateOnFilename,
         .baseErrorMsg{fault::utils::getSafeView(config->baseErrorMsg)},
         .showPopUp = config->showPopUp,
         .printMsgToStdErr = config->printMsgToStdErr,
         .useUnsafeStacktraceOnSignalFallback = config->useUnsafeStacktraceOnSignalFallback,
         .resolveNonSignalTrace = config->resolveNonSignalTrace,
+        .generateMiniDumpWindows = config->generateMiniDumpWindows,
         .signal{.enable = config->signal.enable,
-                .raiseDefaultAfterwards = config->signal.raiseDefaultAfterwards},
+                .raiseDefaultAfterwards = config->signal.raiseDefaultAfterwards,
+                .storeShutdownRequests = config->signal.storeShutdownRequests},
         .terminate{.enable = false},
         .panic{.printMsgToStdErr = config->panic.printMsgToStdErr,
                .showPopUp = config->panic.showPopUp,
@@ -1737,9 +1831,9 @@ void fault_panic(const char* message) {
     FAULT_UNREACHABLE();
 }
 
-void fault_assertion_failure(const char* expr, const char* file, uint32_t line, const char* func,
-                             const char* userMsg) {
-    fault::assertion_failure(expr, file, line, func, userMsg);
+void fault_panic_loc(const char* expr, const char* file, uint32_t line, const char* func,
+                     const char* userMsg) {
+    fault::panic_loc(expr, file, line, func, userMsg);
     FAULT_UNREACHABLE();
 }
 

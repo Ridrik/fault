@@ -29,17 +29,18 @@
     4. Returns from Windows Handler with execute handler comand, or Terminates Process if on abort
     handler
 
-   @brief Both platforms Signal / Exception handling @Note Thread - safe @Note Signal safety is
-    prioritized, noting that safe trace generation is only available on certain configurations.User
-    may choose to set a config flag to collect a regular(signal unsafe) trace as fallback, to which
-    the report will become a best - effort attempt.This library attempts to mitigate this action
-    with deadlock expiration safeguards, so that the expected termination behaviour is seen
-    nonetheless.
+   @brief Both platforms Signal / Exception handling
+    @Note Thread - safe
+    @Note Signal safety is prioritized, noting that safe trace generation is only available on
+    certain configurations. User may choose to set a config flag to collect a regular(signal unsafe)
+    trace as fallback, to which the report will become a best - effort attempt.This library attempts
+    to mitigate this action with deadlock expiration safeguards, so that the expected termination
+    behaviour is seen nonetheless.
 
-   @brief Terminate Handling Sets std::terminate handler.Performs the following, depending on init
+   @brief Terminate Handling Sets std::terminate handler. Performs the following, depending on init
     config flags : Creates object trace and message with unhandled exception; runs user hook; writes
     the crash report, prints summary message to stderr, and displays user popup, followed by
-    terminating process with SIGABRT code on Linux, and code 3 on Windows
+    raising default abort() if on linux, or terminating process on Windows
 
     @Note On Linux,
     popup is dependent on either zenity or kdialog being found on `$PATH`
@@ -51,8 +52,11 @@
 
 #include "fault/config.h"
 
+#undef FAULT_EXPECT_AT_IMPL
+#undef FAULT_EXPECT_IMPL
+
 #define FAULT_EXPECT_AT_IMPL(cond, ...) \
-    ::fault::assertion_failure(#cond, std::source_location::current(), ##__VA_ARGS__)
+    ::fault::panic_loc(#cond, std::source_location::current(), ##__VA_ARGS__)
 
 #if FAULT_USE_LOCATIONS
 #define FAULT_EXPECT_IMPL(cond, ...) FAULT_EXPECT_AT_IMPL(cond, ##__VA_ARGS__)
@@ -94,9 +98,10 @@ enum class ConfigWarning : std::uint8_t {
     kNone = 0,
     kAlreadyInitialized = 1 << 0,
     kBaseErrMsgTruncated = 1 << 1,
-    kReportPathTooLong = 1 << 2,
-    kReportPathWriteTestFailed = 1 << 3,
-    kInternalError = 1 << 4
+    kInvalidPath = 1 << 2,
+    kReportPathTooLong = 1 << 3,
+    kReportPathWriteTestFailed = 1 << 4,
+    kInternalError = 1 << 5
 };
 
 constexpr ConfigWarning operator|(ConfigWarning a, ConfigWarning b) {
@@ -110,7 +115,12 @@ struct FAULT_EXPORT Config {
     };
     struct SignalSettings {
         bool enable{true};
-        bool raiseDefaultAfterwards{true};
+        bool raiseDefaultAfterwards{
+            true};  // Raises default signal after handling it. Only relevant on linux. For non
+                    // posix signals (terminate handler, panic and assert failures), SIGABRT is
+                    // raised instead.
+        bool storeShutdownRequests{true};  // Registers SIGINT & SIGTERM to store shutdown request
+                                           // (no action is actually taken)
     };
     struct PanicSettings {
         bool printMsgToStdErr{true};
@@ -120,13 +130,14 @@ struct FAULT_EXPORT Config {
     std::string_view appName;
     std::string_view buildID;
     std::string_view crashDir;
-    std::string_view reportFileName{"crash_report.log"};
+    std::string_view reportBaseFileName{"crash_report"};
     bool prefixDateOnFilename{true};
     std::string_view baseErrorMsg{kDefaultErrorMessage};
     bool showPopUp{true};
     bool printMsgToStdErr{true};
     bool useUnsafeStacktraceOnSignalFallback{false};
     bool resolveNonSignalTrace{false};
+    bool generateMiniDumpWindows{true};
     SignalSettings signal{};
     TerminateSettings terminate{};
     PanicSettings panic{};
@@ -171,7 +182,7 @@ FAULT_EXPORT bool set_shutdown_request() noexcept;
  * Windows exception handlers
  *
  */
-[[nodiscard]] FAULT_EXPORT bool can_safetrace_becollected() noexcept;
+[[nodiscard]] FAULT_EXPORT bool can_collect_safe_trace() noexcept;
 
 // Use this to immediately shutdown the application and perform similar actions as the fault
 // handlers, such as error message to stderr, fatal popup and write report.
@@ -191,16 +202,15 @@ FAULT_EXPORT bool set_shutdown_request() noexcept;
     std::string_view message, const std::optional<ObjectTrace>& exceptionTrace = std::nullopt);
 
 /**
- * @brief Assertion Handler. Similar to panic, but using general configuration parameters, and
- * with metadata information
+ * @brief Panic version using metadata information, for assertion failures
  *
  * @param expr expression string
  * @param loc source location (file, line, function name)
  * @param userMsg user provided message
  */
-[[noreturn]] FAULT_EXPORT void assertion_failure(
-    std::string_view expr, std::source_location loc = std::source_location::current(),
-    std::string_view userMsg = {});
+[[noreturn]] FAULT_EXPORT void panic_loc(std::string_view expr,
+                                         std::source_location loc = std::source_location::current(),
+                                         std::string_view userMsg = {});
 
 /**
  * @brief Verify invariant. In case of failure, performs panic shutdown, writing object traced
@@ -227,7 +237,7 @@ inline void verify(bool cond, std::string_view userMsg = {}) {
 inline void expect_at(bool cond, std::string_view userMsg = {},
                       std::source_location loc = std::source_location::current()) {
     if (!cond) [[unlikely]] {
-        assertion_failure("?", loc, userMsg);
+        panic_loc("", loc, userMsg);
         FAULT_UNREACHABLE();
     }
 }

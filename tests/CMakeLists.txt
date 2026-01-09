@@ -4,6 +4,11 @@ target_link_libraries(test_cpp_api PRIVATE fault::fault cpptrace::cpptrace)
 target_compile_features(test_cpp_api PRIVATE cxx_std_20)
 set_target_properties(test_cpp_api PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
+add_executable(test_cpp_api_2 test_cpp_api_2.cpp)
+target_link_libraries(test_cpp_api_2 PRIVATE fault::fault cpptrace::cpptrace)
+target_compile_features(test_cpp_api_2 PRIVATE cxx_std_20)
+set_target_properties(test_cpp_api_2 PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+
 add_executable(test_c_api test_c_api.c)
 target_link_libraries(test_c_api PRIVATE fault::fault)
 set_target_properties(test_c_api PROPERTIES LINKER_LANGUAGE C WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")

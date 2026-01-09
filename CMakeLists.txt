@@ -37,12 +37,27 @@ set_target_properties(fault PROPERTIES
 
 if(WIN32)
     target_link_libraries(fault PRIVATE
-        ws2_32 mswsock Shcore Psapi
-        shell32 ole32 # To get AppData location
+        ws2_32 dbghelp ole32
     )
 endif()
 
 target_link_libraries(fault PRIVATE cpptrace::cpptrace)
+
+set(FAULT_LOCATIONS "DEFAULT" CACHE STRING "Source location metadata for fault::expect(): ON, OFF, or DEFAULT(OFF on non-debug/NDEBUG)")
+
+if(FAULT_LOCATIONS STREQUAL "ON")
+    target_compile_definitions(fault PUBLIC FAULT_ENABLE_LOCATIONS)
+elseif(FAULT_LOCATIONS STREQUAL "OFF")
+    target_compile_definitions(fault PUBLIC FAULT_DISABLE_LOCATIONS)
+endif()
+
+set(FAULT_ASSERTIONS "DEFAULT" CACHE STRING "Library assertions: ON, OFF, or DEFAULT(OFF on non-debug/NDEBUG)")
+
+if(FAULT_ASSERTIONS STREQUAL "ON")
+    target_compile_definitions(fault PUBLIC FAULT_FORCE_ASSERTIONS_ON)
+elseif(FAULT_ASSERTIONS STREQUAL "OFF")
+    target_compile_definitions(fault PUBLIC FAULT_FORCE_ASSERTIONS_OFF)
+endif()
 
 if(UNIX)
     set_target_properties(fault PROPERTIES 

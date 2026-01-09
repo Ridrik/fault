@@ -12,7 +12,7 @@ When a C++ application crashes, the default behavior is often a silent exit or a
 * **Async-Signal Safe (AS-Safe):** Prioritizes safe "Object Trace" generation on restrictive environments, or has safeguards for user requested unsafe generation. See below for more info.
 * **C++ Terminate Override:** Captures the stack trace of unhandled C++ exceptions before the runtime kills the process.
 * **Zero-Config Stack Traces:** Powered by `cpptrace` for high-quality, symbolicated traces.
-* **Panic & Assert API:** Provides `fault::panic()`, `DFAULT_ASSERT` and `FAULT_ASSERT` for explicit, fail-fast error handling.
+* **Panic & Assert API:** Provides `fault::panic()`, `fault::expect()`, `fault::expect_at()`, `fault::verify()` and `FAULT_ASSERT` for explicit, fail-fast error handling.
 * **Self-Contained:** Can be bundled as a single shared library with no external runtime dependencies for the consumer.
 * **User configurability:** Each fault action triggers report writing, user fatal Popups and summary message to terminal. User can switch these on/off independently for abnormal crashes, or user requested panic mode.
 
@@ -50,55 +50,151 @@ target_link_libraries(my_app PRIVATE fault::fault)
 
 
 ### 2. Basic usage
+
 Initialize the global handlers at the start of your `main()` function.
-```
-#include <format>
-#include <iostream>
-#include <stdexcept>
 
-#include <fault/fault.hpp>
-
+```cpp
 void foo() {
-    try {
-        throw std::runtime_error("Runtime error");
-    } catch (const std::exception& e) {
-        fault::panic(std::format("Error in foo: {}", e.what()));
-    }
-}
-
-void dereferencePtr() {
     volatile int* p{nullptr};
     *p = 42;
 }
 
 int main() {
     // Initialize global crash handlers (Signals, SEH, and Terminate)
-    if (!fault::init({.appName = "MyApp", .buildID = "MyBuildID", .crashDir = "crash"})) {
+    if (!fault::init({.appName = "MyApp",
+                      .buildID = "MyBuildID",
+                      .crashDir = "crash",
+                      .useUnsafeStacktraceOnSignalFallback = true,
+                      .generateMiniDumpWindows = true})) {
         std::cerr << "Failed to initialize libfault.\n";
         return EXIT_FAILURE;
     }
 
-    // Segmentation fault
-    dereferencePtr();
-
-    // User panic
     foo();
 
-    volatile int* data_ptr{nullptr};
-    // Example: Debug only Asserts
-    FAULT_ASSERT(data_ptr != nullptr, "Input data pointer is null");
-    // Invariant expect, with source location info
-    FAULT_EXPECT(data_ptr != nullptr);
-    fault::expect(data_ptr != nullptr, "Input data pointer is null");
-
-    // Or, without location info
-    fault::verify(data_ptr != nullptr);
+    return 0;
 }
 ```
+
+Will output:
+
+<img src="assets/access_violation_terminal_popup_windows.png" alt="PopUp + terminal message" width="800">
+
+As well as a crash report, containing summaries, timing info and object traces (see below). On Windows, if set, it also generates a minidump to the same directory (.dmp file)
+
+<img src="assets/access_violation_report_windows.png" alt="PopUp + terminal message" width="800">
+
+### 3. Multi-thread fault proof
+
+libfault is resillient to edge cases where multiple threads concurrently perform abnormal operations
+
+```cpp
+void foo() {
+    volatile int* p{nullptr};
+    *p = 42;
+}
+
+int main() {
+    // Initialize global crash handlers (Signals, SEH, and Terminate)
+    if (!fault::init({.appName = "MyApp",
+                      .buildID = "MyBuildID",
+                      .crashDir = "crash",
+                      .useUnsafeStacktraceOnSignalFallback = true,
+                      .resolveNonSignalTrace = true,
+                      .generateMiniDumpWindows = true})) {
+        std::cerr << "Failed to initialize libfault.\n";
+        return EXIT_FAILURE;
+    }
+
+    // Multi threading stress test - only one fault should register consistently
+    for (std::uint8_t i{0}; i < 6; ++i) {
+        std::thread([i] {
+            if (i == 0 || i == 2) {
+                foo();
+            }
+            if (i == 1 || i == 3) {
+                std::terminate();
+            }
+            if (i == 4) {
+                std::abort();
+            }
+            throw std::logic_error("Shouldn't have happened");
+        }).detach();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    fault::panic("Some error");
+
+    return 0;
+}
+```
+Will produce consistent behaviour, only registering the 1st fault to enter any handler
+
+<img src="assets/multi_thread_stress_linux.png" alt="Multi-thread stress proof" width="800">
+
+## 4. Integrates well with cpptrace
+
+libfault uses `cpptrace` to produce smooth cross-platform traces. This also includes the ability to recover trace from exceptions at the throw site. Note the following example:
+
+```cpp
+void terminateTest() {
+    cpptrace::try_catch(
+        [] {
+            struct LaunchThread {
+                LaunchThread() : t{[] { std::this_thread::sleep_for(std::chrono::seconds(1)); }} {}
+
+                std::thread t;  // calls std::terminate if in a joinable state
+            } a;
+
+            bar();  // throws
+
+            a.t.join();
+        },
+        [](const std::exception& e) {
+            // Deal with it, recover or exit
+        });
+}
+
+int main() {
+    // Initialize global crash handlers (Signals, SEH, and Terminate)
+    if (!fault::init({.appName = "MyApp",
+                      .buildID = "MyBuildID",
+                      .crashDir = "crash",
+                      .resolveNonSignalTrace = true})) {
+        std::cerr << "Failed to initialize libfault.\n";
+        return EXIT_FAILURE;
+    }
+
+    terminateTest();
+
+    return 0;
+}
+```
+
+The user has a cpptrace::try_catch installed, and is explicitly joining the std::thread created. However, during execution, some function throws. Before reaching the `catch`, `LaunchThread` destructor runs, which sees std::thread in a joinable state and calls std::terminate. With normal object tracing, the user would have no idea (directly) that it was bar() that threw. By combining traces from exceptions in libfault terminate handler, one can reach:
+
+<img src="assets/crash_report_terminate_with_cpptrace_linux.png" alt="Crash report with cpptrace" width="800">
+
+A fake frame is put in the middle, labelled "====== UPSTREAM ======" for user visibility. Now, the user will know not only what triggered the terminate (the joinable thread), but where the initial fault was.
+
+### 5. Panic, Assertions, Expectations
+
+libfault also allows users to explicitly abort the program with similar actions and reports as the signal/termination handlers. Namely, the user may:
+
+1. **panic** panic may be called at any point to display terminal message, user popup, reports and dumps, before aborting the program.
+2. **FAULT_ASSERT** fault assert is an assertion macro that checks for invariants, and panics if the assertion fails. By default, it only compiles in debug builds, but may be overriden by using `FAULT_ASSERTIONS=ON/OFF/Default`
+3. **fault::expect**, **fault::expect_at**. Similar to assertions, it performs invariant checks, panicking if failing. However, these are present also in release builds. **fault::expect_at** displays location information (line, function, file), whereas, by default, **fault::expect** hides them on non-debug builds
+4. **fault::verify**. Similar to the above, but it is present in any build type, and will never show location information.
+
+### 6. Utilities
+
+libfault provides the following utilities:
+
+1. Shutdown requests: if set, it registers SIGINT and SIGTERM to set shutdown requests. This allows users to check, on their code, whenever a termination request has come by simply calling **fault::has_shutdown_request**. Users may also set themselves a shutdown request by calling **fault::set_shutdown_request**, useful for multi-threaded applications.
+
 ---
 
 ## 🧩 Third-Party Components and Licenses
-faultlib uses `cpptrace` as driving mechanism to collect object traces smoothly across both platforms, and, whenever applicable, signal safe traces. 
+libfault uses `cpptrace` as driving mechanism to collect object traces smoothly across both platforms, and, whenever applicable, signal safe traces. 
 
 | Component | Purpose | License |
 | ---------- | -------- | -------- |
