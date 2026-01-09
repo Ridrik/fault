@@ -2,6 +2,7 @@
 #define FAULT_H
 
 #include "fault/attributes.h"
+#include "fault/config.h"
 #include "fault/fault_export.h"
 
 #include <stdint.h>
@@ -86,16 +87,28 @@ static inline void faultVerify(bool cond, const char* message) {
     }
 }
 
+// NOLINTBEGIN
+
 #ifndef __cplusplus
-#ifndef NDEBUG
-#define FAULT_EXPECT_IMPL(cond, ...) \
+
+#define FAULT_EXPECT_AT_IMPL(cond, ...) \
     faultAssertionFailure(#cond, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+
+#if FAULT_USE_LOCATIONS
+#define FAULT_EXPECT_IMPL(cond, ...) FAULT_EXPECT_AT_IMPL(#cond, ##__VA_ARGS__)
 #else
 #define FAULT_EXPECT_IMPL(cond, ...) faultVerify(false, ##__VA_ARGS__)
 #endif
 #endif
 
-// NOLINTBEGIN
+#define FAULT_EXPECT_AT(cond, ...)                  \
+    do {                                            \
+        if (FAULT_UNLIKELY(!(cond))) {              \
+            FAULT_EXPECT_IMPL(cond, ##__VA_ARGS__); \
+            FAULT_UNREACHABLE();                    \
+        }                                           \
+    } while (0)
+
 #define FAULT_EXPECT(cond, ...)                     \
     do {                                            \
         if (FAULT_UNLIKELY(!(cond))) {              \
@@ -104,10 +117,10 @@ static inline void faultVerify(bool cond, const char* message) {
         }                                           \
     } while (0)
 
-#ifdef NDEBUG
-#define FAULT_ASSERT(cond, ...) ((void)0)
-#else
+#if FAULT_ASSERT_ACTIVE
 #define FAULT_ASSERT(cond, ...) FAULT_EXPECT(cond, ##__VA_ARGS__)
+#else
+#define FAULT_ASSERT(cond, ...) ((void)0)
 #endif
 // NOLINTEND
 #ifdef __cplusplus

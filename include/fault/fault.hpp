@@ -49,9 +49,13 @@
 #ifndef FAULT_HPP
 #define FAULT_HPP
 
-#ifndef NDEBUG
-#define FAULT_EXPECT_IMPL(cond, ...) \
+#include "fault/config.h"
+
+#define FAULT_EXPECT_AT_IMPL(cond, ...) \
     ::fault::assertionFailure(#cond, std::source_location::current(), ##__VA_ARGS__)
+
+#if FAULT_USE_LOCATIONS
+#define FAULT_EXPECT_IMPL(cond, ...) FAULT_EXPECT_AT_IMPL(cond, ##__VA_ARGS__)
 #else
 #define FAULT_EXPECT_IMPL(cond, ...) ::fault::verify(false, ##__VA_ARGS__)
 #endif
@@ -214,25 +218,40 @@ inline void verify(bool cond, std::string_view userMsg = {}) {
 }
 
 /**
- * @brief Similar to verify(), but with location metadata on debug builds
+ * @brief Similar to verify(), but with location metadata
+ *
+ * @param cond condition to verify
+ * @param userMsg user message to be displayed & logged
+ * @param loc location metadata to be displayed & logged
+ */
+inline void expectAt(bool cond, std::string_view userMsg = {},
+                     std::source_location loc = std::source_location::current()) {
+    if (!cond) [[unlikely]] {
+        assertionFailure("?", loc, userMsg);
+        FAULT_UNREACHABLE();
+    }
+}
+
+/**
+ * @brief Similar to verify(), but with location metadata when FAULT_USE_LOCATIONS is defined
+ * (default on debug builds)
  *
  * @param cond condition to verify
  * @param userMsg user message to be displayed & logged
  * @param loc location metadata to be displayed & logged
  */
 inline void expect(bool cond, std::string_view userMsg = {}
-#ifndef NDEBUG
+#if FAULT_USE_LOCATIONS
                    ,
                    std::source_location loc = std::source_location::current()
 #endif
 ) {
-    if (!cond) [[unlikely]] {
-#ifndef NDEBUG
-        assertionFailure("?", loc, userMsg);
+    if (!cond) {
+#if FAULT_USE_LOCATIONS
+        expectAt(false, userMsg, loc);
 #else
-        verify(false, usrMsg);
+        verify(false, userMsg);
 #endif
-        FAULT_UNREACHABLE();
     }
 }
 
