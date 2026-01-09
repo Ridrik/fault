@@ -61,7 +61,7 @@ def resolve_trace(trace_file, symbol_root, use_same_paths: bool):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="DroneLab Trace Resolver: Converts hex offsets to source code lines."
+        description="Trace Resolver: Converts hex offsets to source code lines."
     )
     parser.add_argument(
         "trace", 
