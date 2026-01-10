@@ -3,6 +3,11 @@ import subprocess
 import os
 import argparse
 import sys
+import re
+
+STACK_LINE_RE = re.compile(
+    r'^(0x[0-9a-fA-F]+)\s+(0x[0-9a-fA-F]+)\s+(.+)$'
+)
 
 def resolve_trace(trace_file, symbol_root, use_same_paths: bool):
     if not os.path.exists(trace_file):
@@ -12,8 +17,12 @@ def resolve_trace(trace_file, symbol_root, use_same_paths: bool):
     with open(trace_file, 'r') as f:
         lines = f.readlines()
 
+    if len(lines) < 4:
+        print("Report does not contain enough information. Perhaps it is incomplete/corrupted?")
+        sys.exit(1)
+
     try:
-        build_id = lines[1].strip().split(": ")[1]
+        build_id = lines[2].strip().split(": ")[1]
     except (IndexError, ValueError):
         print("Error: Trace file must contain 'BUILD_ID: <id>'")
         sys.exit(1)
@@ -22,13 +31,11 @@ def resolve_trace(trace_file, symbol_root, use_same_paths: bool):
     print(f" RESOLVING CRASH: {build_id}")
     print(f"{'='*60}\n")
 
-    for line in lines[2:]:
-        parts = line.split()
-        if len(parts) < 3:
+    for line in lines[3:]:
+        m = STACK_LINE_RE.match(line)
+        if not m:
             continue
-        
-        offset = parts[1]
-        original_path = parts[2]
+        _, offset, original_path = m.groups()
         
         # Look for the debug file (assuming .debug extension in archive)
         pathExists: bool = False

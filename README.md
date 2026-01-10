@@ -241,7 +241,7 @@ On debug build will abort with:
 
 # Panic
 
-fault::panic (or fault_panic) may be called explicitly by the user to perform a controlled program abort. It takes a user message string view, as well as an optional provided object trace. For instance, users may find it an useful feature after having caught a thrown exception in which the program needs to be aborted.
+**fault::panic** (or **fault_panic**) may be called explicitly by the user to perform a controlled program abort. It takes a user message string view, as well as an optional provided object trace. For instance, users may find it an useful feature after having caught a thrown exception in which the program needs to be aborted. `fault` makes it so that, whichever fault your program suffered, you get a saved trace report to resolve later, and your application users get a fatal popup instead of a silent crash. (**Note** that popups can be turned off in case the application needs to be restarted immediately)
 
 ```cpp
 void foo() {
@@ -278,6 +278,8 @@ int main() {
 `fault` provides the following utilities:
 
 1. Shutdown requests: if set, it registers SIGINT and SIGTERM to set shutdown requests. This allows users to check, on their code, whenever a termination request has come by simply calling **fault::has_shutdown_request**. Users may also set themselves a shutdown request by calling **fault::set_shutdown_request**, useful for multi-threaded applications.
+2. **Symbol resolver** script, which can be found in `scripts/symbol_resolver.py`. It can resolve an object trace of the crash report given original .debug files in a subdirectory tree that can be mapped via the BUILD ID that the user gave to `fault` configuration. Alternately, if the fault happened on the same machine as the script, it can take directly the object paths reported in it.
+Example: `python scripts/symbol_resolver.py --use_same_paths=1 path/to/crash_report.log`. **Note** it uses addr2line to resolve the trace. Feel free to customize it to your needs.
 
 ---
 
