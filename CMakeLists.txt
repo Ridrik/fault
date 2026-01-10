@@ -26,13 +26,18 @@ set(FAULT_SOURCES
     include/fault/attributes.h
     include/fault/config.h
 )
+set(FAULT_GENERATED_HEADERS
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/fault/version.h"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/fault/fault_export.h"
+)
+
 option(FAULT_BUILD_SHARED "Build libfault as a shared library" ${BUILD_SHARED_LIBS})
 if(FAULT_BUILD_SHARED)
     message(STATUS "Building libfault as shared library")
-    add_library(fault SHARED ${FAULT_SOURCES})
+    add_library(fault SHARED ${FAULT_SOURCES} ${FAULT_GENERATED_HEADERS})
 else()
     message(STATUS "Building libfault as static library")
-    add_library(fault STATIC ${FAULT_SOURCES})
+    add_library(fault STATIC ${FAULT_SOURCES} ${FAULT_GENERATED_HEADERS})
 endif()
 
 add_library(fault::fault ALIAS fault)
