@@ -51,6 +51,7 @@ target_link_libraries(my_app PRIVATE fault::fault)
 By default, libfault is fetched as static library (or whatever value ${BUILD_SHARED_LIBS} holds). Users may override it using FAULT_BUILD_SHARED=On/Off.
 (Note: When building from source, cpptrace is fetched as part of it if FAULT_BUNDLE_CPPTRACE=On is selected (default), unless the target already exists. The same configurational options for cpptrace apply)
 
+---
 
 ### 2. Basic usage
 
@@ -86,6 +87,8 @@ Will output:
 As well as a crash report, containing summaries, timing info and object traces (see below). On Windows, if set, it also generates a minidump to the same directory (.dmp file)
 
 <img src="assets/access_violation_report_windows.png" alt="PopUp + terminal message" width="800">
+
+---
 
 ### 3. Multi-thread fault proof
 
@@ -134,6 +137,8 @@ Will produce consistent behaviour, only registering the 1st fault to enter any h
 
 <img src="assets/multi_thread_stress_linux.png" alt="Multi-thread stress proof" width="800">
 
+---
+
 ## 4. Integrates well with cpptrace
 
 libfault uses `cpptrace` to produce smooth cross-platform traces. This also includes the ability to recover trace from exceptions at the throw site. Note the following example:
@@ -179,6 +184,8 @@ The user has a cpptrace::try_catch installed, and is explicitly joining the std:
 
 A fake frame is put in the middle, labelled "====== UPSTREAM ======" for user visibility. Now, the user will know not only what triggered the terminate (the joinable thread), but where the initial fault was.
 
+---
+
 ### 5. Panic, Assertions, Expectations
 
 libfault also allows users to explicitly abort the program with similar actions and reports as the signal/termination handlers. Namely, the user may:
@@ -188,11 +195,97 @@ libfault also allows users to explicitly abort the program with similar actions 
 3. **fault::expect**, **fault::expect_at**. Similar to assertions, it performs invariant checks, panicking if failing. However, these are present also in release builds. **fault::expect_at** always displays location information (line, function, file), whereas, by default, **fault::expect** hides them on non-debug builds. Users may override `fault::expect` location memory by using `FAULT_USE_LOCATIONS=ON/OFF/Default`
 4. **fault::verify**. Similar to the above, but it is present in any build type, and will never show location information.
 
+Example:
+
+```cpp
+int main() {
+    // Initialize global crash handlers (Signals, SEH, and Terminate)
+    if (!fault::init({.appName = "MyApp",
+                      .buildID = "MyBuildID",
+                      .crashDir = "crash",
+                      .useUnsafeStacktraceOnSignalFallback = true,
+                      .generateMiniDumpWindows = true})) {
+        std::cerr << "Failed to initialize libfault.\n";
+        return EXIT_FAILURE;
+    }
+
+    const auto result = add(5, 2);
+
+    // Assertion: compiles on debug builds by default, with source location
+    FAULT_ASSERT(result == 7, "Math is broken");
+
+    // Expect: Always on, location information by default on debug builds
+    fault::expect(result == 7, "Math is broken");
+    FAULT_EXPECT(result == 7,
+                 "Math is broken");  // Only difference is expr 'result == 7' is also displayed
+    // Or, with always source location
+    fault::expect_at(result == 7, "Math is broken");
+
+    // Always on, never with source location
+    fault::verify(result == 7, "Math is broken");
+
+    // Invariant failures on any of the above produces similar panic action
+    const auto c = add(5, 10);
+    FAULT_ASSERT(c != 15, "Bad math");
+
+    return 0;
+}
+```
+
+On debug build will abort with:
+
+<img src="assets/assert_failure_display_windows.png" alt="Assertion failure display" width="800">
+
+---
+
 ### 6. Utilities
 
 libfault provides the following utilities:
 
 1. Shutdown requests: if set, it registers SIGINT and SIGTERM to set shutdown requests. This allows users to check, on their code, whenever a termination request has come by simply calling **fault::has_shutdown_request**. Users may also set themselves a shutdown request by calling **fault::set_shutdown_request**, useful for multi-threaded applications.
+
+---
+
+### 7. libfault in C
+
+Libfault works for C consumers, thanks to its `fault.h` API header. The behaviour largely mimics the one in C++, with the obvious exception of having no std::terminate handling.
+
+```c
+void infinite_recursion() {
+    volatile char buffer[256];
+    infinite_recursion();
+    buffer[0] = 0;
+}
+
+int main() {
+    FaultConfig config = fault_get_default_config();
+    config.appName = "MyApp";
+    config.buildID = "MyBuildID";
+    config.crashDir = "crash";
+    config.useUnsafeStacktraceOnSignalFallback = true;
+    const FaultInitResult res =
+        fault_init(&config);  // if no config changes wanted, user can call fault_init(NULL)
+    if (!res.success) {
+        printf("Failed to init libfault\n");
+        return 1;
+    }
+
+    infinite_recursion();  // Triggers seg fault on linux & stack overflow on windows
+
+    printf("C API test passed\n");
+    return 0;
+}
+```
+
+Libfault reserves stack on both platforms to ensure stack overflows are properly displayed.
+
+<img src="assets/overflow_linux_c.png" alt="Overflow display in C (Linux)" width="800">
+
+With crash report:
+
+<img src="assets/overflow_report_linux_c.png" alt="Overflow report in C (Linux)" width="800">
+
+(...continues)
 
 ---
 

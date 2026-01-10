@@ -11,6 +11,8 @@
 #include <cpptrace/cpptrace.hpp>
 #include <cpptrace/from_current.hpp>
 
+namespace {
+
 void bar() {
     throw std::logic_error("This shouldn't have happened");
 }
@@ -50,6 +52,12 @@ void foo() {
     fault::expect_at(p != nullptr);
 }
 
+int add(int a, int b) {
+    return a + b;
+}
+
+}  // namespace
+
 int main() {
     // Initialize global crash handlers (Signals, SEH, and Terminate)
     if (!fault::init({.appName = "MyApp",
@@ -61,8 +69,24 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    FAULT_ASSERT(1 > 2);
-    foo();
+    const auto result = add(5, 2);
+
+    // Assertion: compiles on debug builds by default, with source location
+    FAULT_ASSERT(result == 7, "Math is broken");
+
+    // Expect: Always on, location information by default on debug builds
+    fault::expect(result == 7, "Math is broken");
+    FAULT_EXPECT(result == 7,
+                 "Math is broken");  // Only difference is expr 'result == 7' is also displayed
+    // Or, with always source location
+    fault::expect_at(result == 7, "Math is broken");
+
+    // Always on, never with source location
+    fault::verify(result == 7, "Math is broken");
+
+    // Invariant failures on any of the above produces similar panic action
+    const auto c = add(5, 10);
+    FAULT_ASSERT(c != 15, "Bad math");
 
     return 0;
 }

@@ -14,15 +14,14 @@ int main() {
     config.buildID = "MyBuildID";
     config.crashDir = "crash";
     config.useUnsafeStacktraceOnSignalFallback = true;
-    const FaultInitResult res = fault_init(&config);
+    const FaultInitResult res =
+        fault_init(&config);  // if no config changes wanted, user can call fault_init(NULL)
     if (!res.success) {
         printf("Failed to init libfault\n");
         return 1;
     }
-    volatile int* p = NULL;
-    *p = 42;
 
-    infinite_recursion();  // Triggers seg fault on linux
+    infinite_recursion();  // Triggers seg fault on linux & stack overflow on windows
 
     printf("C API test passed\n");
     return 0;
