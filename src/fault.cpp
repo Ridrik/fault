@@ -95,7 +95,7 @@ cpptrace::object_trace toCppTrace(const ObjectTrace& trace) {
 
 constexpr const char* const kHexChars = "0123456789abcdef";
 
-void safeWriteHex(std::uintptr_t value, std::array<char, 19>& buf) noexcept {
+constexpr void safeWriteHex(std::uintptr_t value, std::array<char, 19>& buf) noexcept {
     buf[0] = '0';
     buf[1] = 'x';
     for (int i{0}; i < 16; ++i) {
@@ -103,7 +103,6 @@ void safeWriteHex(std::uintptr_t value, std::array<char, 19>& buf) noexcept {
     }
     buf[18] = '\0';
 }
-
 constexpr void safeAppend(char* buffer, std::size_t& offset, std::size_t capacity,
                           const char* str) noexcept {
     if (str == nullptr) {
@@ -125,6 +124,13 @@ constexpr void safeAppend(char* buffer, std::size_t& offset, std::size_t capacit
         buffer[offset++] = *str++;
     }
     buffer[offset] = '\0';
+}
+
+constexpr void safeAppend(char* buffer, std::size_t& offset, std::size_t capacity,
+                          std::uintptr_t value) noexcept {
+    std::array<char, 19> buf{};
+    safeWriteHex(value, buf);
+    safeAppend(buffer, offset, capacity, buf.data(), buf.size());
 }
 
 void itoaSafeAppend(char* buffer, std::size_t& offset, std::size_t capacity,
@@ -350,9 +356,8 @@ ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fileNam
             fallbackPath.replace_filename(extension);
             if (ec) {
                 return ConfigWarning::kInvalidPath;
-            } else {
-                finalPathStr = std::move(fallbackPath).string();
             }
+            finalPathStr = std::move(fallbackPath).string();
         }
         if (finalPathStr.size() >= writeDir.size()) {
             return ConfigWarning::kReportPathTooLong;
@@ -817,7 +822,7 @@ struct WindowsHandling {
         MINIDUMP_EXCEPTION_INFORMATION mei;
         MINIDUMP_EXCEPTION_INFORMATION* pMei{nullptr};
 
-        if (exceptionPtrs) {
+        if (exceptionPtrs != nullptr) {
             mei.ThreadId = GetCurrentThreadId();
             mei.ExceptionPointers = exceptionPtrs;
             mei.ClientPointers = FALSE;
@@ -829,7 +834,7 @@ struct WindowsHandling {
 
         CloseHandle(hFile);
 
-        return res;
+        return res != 0;
     }
 
     static void doWriteReport(std::size_t size, bool printToStderr, bool writeReport,
@@ -874,8 +879,8 @@ struct WindowsHandling {
         {
             std::size_t titleOffset{0};
             utils::safeAppend(WindowsHandling::titleBuffer.data(), titleOffset,
-                              WindowsHandling::titleBuffer.size(), _internal::config.appName.data(),
-                              _internal::config.appName.size());
+                              WindowsHandling::titleBuffer.size(),
+                              _internal::config.appName.data());
             utils::safeAppend(WindowsHandling::titleBuffer.data(), titleOffset,
                               WindowsHandling::titleBuffer.size(), " Fatal Error");
         }
@@ -896,23 +901,20 @@ struct WindowsHandling {
         if ((pExc != nullptr) && (pExc->ExceptionRecord != nullptr)) {
             const EXCEPTION_RECORD& rec = *pExc->ExceptionRecord;
 
-            std::array<char, 19> regBuff{};
-
             utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
                               WindowsHandling::finalBuffer.size(), "Exception Code: ");
-            utils::safeWriteHex(static_cast<std::uintptr_t>(rec.ExceptionCode), regBuff);
             utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                              WindowsHandling::finalBuffer.size(), regBuff.data());
+                              WindowsHandling::finalBuffer.size(),
+                              static_cast<std::uintptr_t>(rec.ExceptionCode));
             utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
                               WindowsHandling::finalBuffer.size(), "\n");
             // If it's an Access Violation, ExceptionInformation[1] is the faulting address
             if (rec.ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec.NumberParameters >= 2) {
                 utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
                                   WindowsHandling::finalBuffer.size(), "Fault Address: ");
-                utils::safeWriteHex(static_cast<std::uintptr_t>(rec.ExceptionInformation[1]),
-                                    regBuff);
                 utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                                  WindowsHandling::finalBuffer.size(), regBuff.data());
+                                  WindowsHandling::finalBuffer.size(),
+                                  static_cast<std::uintptr_t>(rec.ExceptionInformation[1]));
                 utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
                                   WindowsHandling::finalBuffer.size(), "\n");
             }
@@ -970,7 +972,7 @@ struct WindowsHandling {
     }
 
     [[noreturn]] static void winAbortHandler(int /*sig*/) {
-        constexpr DWORD kAbortCode{SIGABRT};
+        constexpr DWORD kAbortCode{3};
         constexpr PEXCEPTION_POINTERS kNoContextPtr{nullptr};
         WindowsHandling::windowsCommonProcessSignalEvent(
             kNoContextPtr, kAbortCode,
@@ -1233,7 +1235,7 @@ struct LinuxHandling {
         sigaddset(&set, sig);
         pthread_sigmask(SIG_UNBLOCK, &set, nullptr);
         std::raise(sig);
-        ExitHandler::shutdown(sig);
+        ExitHandler::shutdown(128 + sig);
         FAULT_UNREACHABLE();
     }
 
