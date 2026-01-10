@@ -236,6 +236,9 @@ On debug build will abort with:
 
 <img src="assets/assert_failure_display_windows.png" alt="Assertion failure display" width="800">
 
+
+**Note** On Linux, if reraise signal is set, all these panic/assertions will end with reraising default SIGABRT, which usually prints the default abort message with core dumped (if system configured). On Windows, Minidump is instead explicitly generated if set on configuration, and afterwards the program is terminated. This follows the same final step as std::terminate handling.
+
 ---
 
 ### 6. Utilities
