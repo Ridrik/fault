@@ -9,6 +9,16 @@ configure_file(
     "${CMAKE_CURRENT_BINARY_DIR}/generated/fault/version.h"
 )
 
+if(UNIX AND NOT APPLE)
+    find_program(ZENITY_EXECUTABLE zenity)
+    find_program(KDIALOG_EXECUTABLE kdialog)
+
+    if(NOT ZENITY_EXECUTABLE AND NOT KDIALOG_EXECUTABLE)
+        message(STATUS "libfault: Note: Neither 'zenity' nor 'kdialog' found in PATH. "
+                       "Runtime popups will not be displayed unless one is installed at runtime.")
+    endif()
+endif()
+
 set(FAULT_SOURCES
     src/fault.cpp
     include/fault/fault.hpp
