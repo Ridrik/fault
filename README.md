@@ -339,6 +339,6 @@ With crash report:
 ### Third-Party Dependency Licensing
 **`fault` depends on [cpptrace](https://github.com/jeremy-rifkin/cpptrace). 
 * **Standard Build:** MIT.
-* **With libdwarf:** If `cpptrace` is configured to use `libdwarf` and is linked **statically**, the resulting binary is subject to the **LGPL** license.
+* **With libdwarf:** If `cpptrace` is configured to use `libdwarf` and is linked **statically**, the resulting binary is subject to the **LGPL** license. Linking this condition statically to `fault` will therefore make the resulting binary LGPL.
 
 ---
