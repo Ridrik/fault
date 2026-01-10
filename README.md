@@ -1,10 +1,10 @@
-# libfault
+# `fault`
 
-libfault is a lightweight, cross-platform crash reporting and panic library for C++20 Linux and Windows. It provides a unified interface for saving object traces when things go wrong, whether it's a segmentation fault on Linux, an unhandled exception on Windows, a std::terminate or a manual panic/assertion call in your logic.
+`fault` is a lightweight crash reporting and panic library for C and C++, implemented in C++20. It provides a unified interface for capturing object traces when things go wrong, such as segmentation faults on Linux, unhandled exceptions on Windows, std::terminate, or explicit panics and assertions.
 
 ## Description
 
-When a C++ application crashes, the default behavior is often a silent exit or a cryptic "Segmentation Fault" message. libfault changes this by intercepting system-level failures and providing developers with the context needed to debug them later, even from production contexts. It abstracts away the platform-specific complexities of POSIX signals and Windows Structured Exception Handling (SEH).
+When a C++ application crashes, the default behavior is often a silent exit or a cryptic "Segmentation Fault" message. `fault` changes this by intercepting system-level failures and providing developers with the context needed to debug them later, even from production contexts. It abstracts away the platform-specific complexities of POSIX signals and Windows Structured Exception Handling (SEH).
 
 ### Key Features
 * **Native C & C++ Support:** Use the modern C++ API or the stable C-linkage interface for legacy projects.
@@ -20,11 +20,11 @@ When a C++ application crashes, the default behavior is often a silent exit or a
 
 ### Production & Async-Signal Safety
 
-libfault is designed for high-availability production environments where stability during a crash is non-negotiable.
+`fault` is designed for high-availability production environments where stability during a crash is non-negotiable.
 
 * **Async-Signal Safe (AS-Safe) Collection:** During a fatal signal (Linux) or exception (Windows), the library avoids using the heap or complex C++ runtime calls as much as possible. It prioritizes collecting signal safe "Raw Object Trace", a collection of instruction pointers with memory offsets and binary paths, using the `cpptrace` efforts as deriving mechanism.
-* **Best-effort Safeguards** If no safe trace can be collected, the user may optionally activate a best-effort approach to collect a regular trace. In this case, the library puts safeguards in place against deadlocks or recursive crashes, to ensure that the program is terminated cleanly, wether the (unsafe) trace is collected or not.
-* **Delayed Resolution:** Instead of resolving symbols (function names/filenames) inside the crashed process, libfault outputs a formatted "object trace" in its log.
+* **Best-effort Safeguards** If no safe trace can be collected, the user may optionally activate a best-effort approach to collect a regular trace. In this case, the library puts safeguards in place against deadlocks or recursive crashes, to ensure that the program is terminated cleanly, wether the (unsafe) trace is collected or not. **Note**: currently, on Windows, fully safe object traces can not be generated, and it is recommended for users to allow unsafe generation if a trace is desired. On Linux, safe traces can be collected only when using `libwind` with `_dl_find_object`. By default, `fault` will choose libwind this configuration parameter when fetching `cpptrace`.
+* **Delayed Resolution:** Instead of resolving symbols (function names/filenames) inside the crashed process, `fault` outputs a formatted "object trace" in its log.
 * **Protected Debug Files:** Developers can resolve these traces locally using their original `.debug` or `.pdb` files. This means your production binaries can remain stripped (small and secure), while your logs remain fully actionable.
 * **Trace Resolution is optional** Traces can be optionally resolved for non-restrictive environments, if the user wishes. For safety, this is never done in Linux Posix or Windows SEH environments.
 
@@ -33,13 +33,13 @@ libfault is designed for high-availability production environments where stabili
 ## Quick Start
 
 ### 1. Integration (CMake FetchContent)
-Add this to your `CMakeLists.txt` to integrate libfault directly into your project:
+Add this to your `CMakeLists.txt` to integrate `fault` directly into your project:
 
 ```cmake
 include(FetchContent)
 FetchContent_Declare(
     fault
-    GIT_REPOSITORY [https://github.com/Ridrik/libfault.git](https://github.com/Ridrik/libfault.git)
+    GIT_REPOSITORY [https://github.com/Ridrik/fault.git](https://github.com/Ridrik/fault.git)
     GIT_TAG v0.1.0
 )
 FetchContent_MakeAvailable(fault)
@@ -48,7 +48,7 @@ FetchContent_MakeAvailable(fault)
 target_link_libraries(my_app PRIVATE fault::fault)
 ```
 
-By default, libfault is fetched as static library (or whatever value ${BUILD_SHARED_LIBS} holds). Users may override it using FAULT_BUILD_SHARED=On/Off.
+By default, `fault` is fetched as static library (or whatever value ${BUILD_SHARED_LIBS} holds). Users may override it using FAULT_BUILD_SHARED=On/Off.
 (Note: When building from source, cpptrace is fetched as part of it if FAULT_BUNDLE_CPPTRACE=On is selected (default), unless the target already exists. The same configurational options for cpptrace apply)
 
 ---
@@ -70,7 +70,7 @@ int main() {
                       .crashDir = "crash",
                       .useUnsafeStacktraceOnSignalFallback = true,
                       .generateMiniDumpWindows = true})) {
-        std::cerr << "Failed to initialize libfault.\n";
+        std::cerr << "Failed to initialize fault.\n";
         return EXIT_FAILURE;
     }
 
@@ -92,7 +92,7 @@ As well as a crash report, containing summaries, timing info and object traces (
 
 ### 3. Multi-thread fault proof
 
-libfault is resillient to edge cases where multiple threads concurrently perform abnormal operations
+`fault` is resillient to edge cases where multiple threads concurrently perform abnormal operations
 
 ```cpp
 void foo() {
@@ -108,7 +108,7 @@ int main() {
                       .useUnsafeStacktraceOnSignalFallback = true,
                       .resolveNonSignalTrace = true,
                       .generateMiniDumpWindows = true})) {
-        std::cerr << "Failed to initialize libfault.\n";
+        std::cerr << "Failed to initialize fault.\n";
         return EXIT_FAILURE;
     }
 
@@ -141,7 +141,7 @@ Will produce consistent behaviour, only registering the 1st fault to enter any h
 
 ## 4. Integrates well with cpptrace
 
-libfault uses `cpptrace` to produce smooth cross-platform traces. This also includes the ability to recover trace from exceptions at the throw site. Note the following example:
+`fault` uses `cpptrace` to produce smooth cross-platform traces. This also includes the ability to recover trace from exceptions at the throw site. Note the following example:
 
 ```cpp
 void terminateTest() {
@@ -168,7 +168,7 @@ int main() {
                       .buildID = "MyBuildID",
                       .crashDir = "crash",
                       .resolveNonSignalTrace = true})) {
-        std::cerr << "Failed to initialize libfault.\n";
+        std::cerr << "Failed to initialize fault.\n";
         return EXIT_FAILURE;
     }
 
@@ -178,7 +178,7 @@ int main() {
 }
 ```
 
-The user has a cpptrace::try_catch installed, and is explicitly joining the std::thread created. However, during execution, some function throws. Before reaching the `catch`, `LaunchThread` destructor runs, which sees std::thread in a joinable state and calls std::terminate. With normal object tracing, the user would have no idea (directly) that it was bar() that threw. By combining traces from exceptions in libfault terminate handler, one can reach:
+The user has a cpptrace::try_catch installed, and is explicitly joining the std::thread created. However, during execution, some function throws. Before reaching the `catch`, `LaunchThread` destructor runs, which sees std::thread in a joinable state and calls std::terminate. With normal object tracing, the user would have no idea (directly) that it was bar() that threw. By combining traces from exceptions in `fault` terminate handler, one can reach:
 
 <img src="assets/crash_report_terminate_with_cpptrace_linux.png" alt="Crash report with cpptrace" width="800">
 
@@ -188,7 +188,7 @@ A fake frame is put in the middle, labelled "====== UPSTREAM ======" for user vi
 
 ### 5. Panic, Assertions, Expectations
 
-libfault also allows users to explicitly abort the program with similar actions and reports as the signal/termination handlers. Namely, the user may:
+`fault` also allows users to explicitly abort the program with similar actions and reports as the signal/termination handlers. Namely, the user may:
 
 1. **panic** panic may be called at any point to display terminal message, user popup, reports and dumps, before aborting the program.
 2. **FAULT_ASSERT** fault assert is an assertion macro that checks for invariants, and panics if the assertion fails, displaying location information. By default, it only compiles in debug builds, but may be overriden by using `FAULT_ASSERTIONS=ON/OFF/Default`
@@ -205,7 +205,7 @@ int main() {
                       .crashDir = "crash",
                       .useUnsafeStacktraceOnSignalFallback = true,
                       .generateMiniDumpWindows = true})) {
-        std::cerr << "Failed to initialize libfault.\n";
+        std::cerr << "Failed to initialize fault.\n";
         return EXIT_FAILURE;
     }
 
@@ -239,19 +239,51 @@ On debug build will abort with:
 
 **Note** On Linux, if reraise signal is set, all these panic/assertions will end with reraising default SIGABRT, which usually prints the default abort message with core dumped (if system configured). On Windows, Minidump is instead explicitly generated if set on configuration, and afterwards the program is terminated. This follows the same final step as std::terminate handling.
 
+# Panic
+
+fault::panic (or fault_panic) may be called explicitly by the user to perform a controlled program abort. It takes a user message string view, as well as an optional provided object trace. For instance, users may find it an useful feature after having caught a thrown exception in which the program needs to be aborted.
+
+```cpp
+void foo() {
+    throw std::runtime_error("Shouldn't have happened");
+}
+
+int main() {
+    // Initialize global crash handlers (Signals, SEH, and Terminate)
+    if (!fault::init({.appName = "MyApp",
+                      .buildID = "MyBuildID",
+                      .crashDir = "crash",
+                      .useUnsafeStacktraceOnSignalFallback = true,
+                      .generateMiniDumpWindows = true})) {
+        std::cerr << "Failed to initialize fault.\n";
+        return EXIT_FAILURE;
+    }
+
+    cpptrace::try_catch([] { foo(); },
+                        [](const std::exception& e) {
+                            const auto objectTrace =
+                                cpptrace::raw_trace_from_current_exception().resolve_object_trace();
+
+                            fault::panic(e.what(), fault::adapter::from_cpptrace(objectTrace));
+                        });
+}
+
+```
+
+
 ---
 
 ### 6. Utilities
 
-libfault provides the following utilities:
+`fault` provides the following utilities:
 
 1. Shutdown requests: if set, it registers SIGINT and SIGTERM to set shutdown requests. This allows users to check, on their code, whenever a termination request has come by simply calling **fault::has_shutdown_request**. Users may also set themselves a shutdown request by calling **fault::set_shutdown_request**, useful for multi-threaded applications.
 
 ---
 
-### 7. libfault in C
+### 7. `fault` in C
 
-Libfault works for C consumers, thanks to its `fault.h` API header. The behaviour largely mimics the one in C++, with the obvious exception of having no std::terminate handling.
+`fault` works for C consumers, thanks to its `fault.h` API header. The behaviour largely mimics the one in C++, with the obvious exception of having no std::terminate handling.
 
 ```c
 void infinite_recursion() {
@@ -269,7 +301,7 @@ int main() {
     const FaultInitResult res =
         fault_init(&config);  // if no config changes wanted, user can call fault_init(NULL)
     if (!res.success) {
-        printf("Failed to init libfault\n");
+        printf("Failed to init fault\n");
         return 1;
     }
 
@@ -280,7 +312,7 @@ int main() {
 }
 ```
 
-Libfault reserves stack on both platforms to ensure stack overflows are properly displayed.
+`fault` reserves stack on both platforms to ensure stack overflows are properly displayed.
 
 <img src="assets/overflow_linux_c.png" alt="Overflow display in C (Linux)" width="800">
 
@@ -293,7 +325,7 @@ With crash report:
 ---
 
 ## 🧩 Third-Party Components and Licenses
-libfault uses `cpptrace` as driving mechanism to collect object traces smoothly across both platforms, and, whenever applicable, signal safe traces. 
+`fault` uses `cpptrace` as driving mechanism to collect object traces smoothly across both platforms, and, whenever applicable, signal safe traces. 
 
 | Component | Purpose | License |
 | ---------- | -------- | -------- |
@@ -302,10 +334,10 @@ libfault uses `cpptrace` as driving mechanism to collect object traces smoothly 
 ---
 
 ## License
-`libfault` is licensed under the **MIT License** (see `LICENSE` file).
+`fault` is licensed under the **MIT License** (see `LICENSE` file).
 
 ### Third-Party Dependency Licensing
-**`libfault` depends on [cpptrace](https://github.com/jeremy-rifkin/cpptrace). 
+**`fault` depends on [cpptrace](https://github.com/jeremy-rifkin/cpptrace). 
 * **Standard Build:** MIT.
 * **With libdwarf:** If `cpptrace` is configured to use `libdwarf` and is linked **statically**, the resulting binary is subject to the **LGPL** license.
 

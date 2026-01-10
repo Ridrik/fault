@@ -17,7 +17,7 @@ int main() {
                       .useUnsafeStacktraceOnSignalFallback = true,
                       .resolveNonSignalTrace = true,
                       .generateMiniDumpWindows = true})) {
-        std::cerr << "Failed to initialize libfault.\n";
+        std::cerr << "Failed to initialize fault.\n";
         return EXIT_FAILURE;
     }
 

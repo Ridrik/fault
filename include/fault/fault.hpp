@@ -1,8 +1,8 @@
 /*
- * libfault - A C++ and C fault handling library for Linux and Windows, containing signal and
+ * fault - A C++ and C fault handling library for Linux and Windows, containing signal and
  * exception handlers, as well as user assertions and panic options, generating reports with
  * metadata, raw or resolved traces, and more
- * https://github.com/Ridrik/libfault
+ * https://github.com/Ridrik/fault
  *
  * Licensed under the MIT License.
  */

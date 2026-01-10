@@ -47,16 +47,15 @@ void terminateTest() {
         });
 }
 
-void foo() {
-    volatile int* p{nullptr};
-    fault::expect_at(p != nullptr);
-}
-
 int add(int a, int b) {
     return a + b;
 }
 
 }  // namespace
+
+void foo() {
+    throw std::runtime_error("Shouldn't have happened");
+}
 
 int main() {
     // Initialize global crash handlers (Signals, SEH, and Terminate)
@@ -65,9 +64,20 @@ int main() {
                       .crashDir = "crash",
                       .useUnsafeStacktraceOnSignalFallback = true,
                       .generateMiniDumpWindows = true})) {
-        std::cerr << "Failed to initialize libfault.\n";
+        std::cerr << "Failed to initialize fault.\n";
         return EXIT_FAILURE;
     }
+
+    cpptrace::try_catch([] { foo(); },
+                        [](const std::exception& e) {
+                            const auto objectTrace =
+                                cpptrace::raw_trace_from_current_exception().resolve_object_trace();
+
+                            fault::panic(e.what(), fault::adapter::from_cpptrace(objectTrace));
+                        });
+
+    cpptrace::generate_object_trace();
+    cpptrace::can_get_safe_object_frame();
 
     const auto result = add(5, 2);
 

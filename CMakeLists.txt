@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21...4.1)
 
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-project(libfault VERSION 0.1.0 LANGUAGES C CXX)
+project(fault VERSION 0.1.0 LANGUAGES C CXX)
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/version.h.in"
@@ -14,7 +14,7 @@ if(UNIX AND NOT APPLE)
     find_program(KDIALOG_EXECUTABLE kdialog)
 
     if(NOT ZENITY_EXECUTABLE AND NOT KDIALOG_EXECUTABLE)
-        message(STATUS "libfault: Note: Neither 'zenity' nor 'kdialog' found in PATH. "
+        message(STATUS "fault: Note: Neither 'zenity' nor 'kdialog' found in PATH. "
                        "Runtime popups will not be displayed unless one is installed at runtime.")
     endif()
 endif()
@@ -31,12 +31,12 @@ set(FAULT_GENERATED_HEADERS
     "${CMAKE_CURRENT_BINARY_DIR}/include/fault/fault_export.h"
 )
 
-option(FAULT_BUILD_SHARED "Build libfault as a shared library" ${BUILD_SHARED_LIBS})
+option(FAULT_BUILD_SHARED "Build fault as a shared library" ${BUILD_SHARED_LIBS})
 if(FAULT_BUILD_SHARED)
-    message(STATUS "Building libfault as shared library")
+    message(STATUS "Building fault as shared library")
     add_library(fault SHARED ${FAULT_SOURCES} ${FAULT_GENERATED_HEADERS})
 else()
-    message(STATUS "Building libfault as static library")
+    message(STATUS "Building fault as static library")
     add_library(fault STATIC ${FAULT_SOURCES} ${FAULT_GENERATED_HEADERS})
 endif()
 
@@ -71,7 +71,7 @@ endif()
 
 target_link_libraries(fault PRIVATE cpptrace::cpptrace)
 
-set(FAULT_LOCATIONS "DEFAULT" CACHE STRING "libfault source location metadata for fault::expect(): ON, OFF, or DEFAULT(OFF on non-debug/NDEBUG)")
+set(FAULT_LOCATIONS "DEFAULT" CACHE STRING "fault source location metadata for fault::expect(): ON, OFF, or DEFAULT(OFF on non-debug/NDEBUG)")
 
 if(FAULT_LOCATIONS STREQUAL "ON")
     target_compile_definitions(fault PUBLIC FAULT_ENABLE_LOCATIONS)
@@ -79,7 +79,7 @@ elseif(FAULT_LOCATIONS STREQUAL "OFF")
     target_compile_definitions(fault PUBLIC FAULT_DISABLE_LOCATIONS)
 endif()
 
-set(FAULT_ASSERTIONS "DEFAULT" CACHE STRING "libfault assertions: ON, OFF, or DEFAULT(OFF on non-debug/NDEBUG)")
+set(FAULT_ASSERTIONS "DEFAULT" CACHE STRING "fault assertions: ON, OFF, or DEFAULT(OFF on non-debug/NDEBUG)")
 
 if(FAULT_ASSERTIONS STREQUAL "ON")
     target_compile_definitions(fault PUBLIC FAULT_FORCE_ASSERTIONS_ON)
@@ -96,12 +96,12 @@ endif()
 include(GenerateExportHeader)
 generate_export_header(fault BASE_NAME FAULT EXPORT_FILE_NAME include/fault/fault_export.h)
 
-option(FAULT_INSTALL "Generate install rules for libfault" ${PROJECT_IS_TOP_LEVEL})
+option(FAULT_INSTALL "Generate install rules for fault" ${PROJECT_IS_TOP_LEVEL})
 
 if(FAULT_INSTALL)
-    message(STATUS "libfault: Install rules enabled")
+    message(STATUS "fault: Install rules enabled")
     include(cmake/install.cmake)
     add_subdirectory(tests)
 else()
-    message(STATUS "libfault: Skipping install rules")
+    message(STATUS "fault: Skipping install rules")
 endif()

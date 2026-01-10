@@ -17,7 +17,7 @@ int main() {
     const FaultInitResult res =
         fault_init(&config);  // if no config changes wanted, user can call fault_init(NULL)
     if (!res.success) {
-        printf("Failed to init libfault\n");
+        printf("Failed to init fault\n");
         return 1;
     }
 
