@@ -1,7 +1,14 @@
 @PACKAGE_INIT@
 
-if(NOT @FAULT_BUNDLE_CPPTRACE@)
-    find_dependency(cpptrace)
+include(CMakeFindDependencyMacro)
+
+if(NOT TARGET cpptrace::cpptrace)
+    if(NOT @FAULT_BUNDLE_CPPTRACE@)
+        find_dependency(cpptrace)
+    elseif(TARGET fault::fault_adapter)
+        find_dependency(cpptrace QUIET) 
+    endif()
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/faultTargets.cmake")
+check_required_components(fault)

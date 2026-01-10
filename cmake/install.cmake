@@ -1,7 +1,7 @@
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-install(TARGETS fault
+install(TARGETS fault fault_adapter
     EXPORT fault-targets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -11,6 +11,7 @@ install(TARGETS fault
 
 install(DIRECTORY include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
 )
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/fault/fault_export.h"
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/fault"

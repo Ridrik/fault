@@ -1,28 +1,35 @@
-cmake_minimum_required(VERSION 3.15...4.1)
+cmake_minimum_required(VERSION 3.21...4.1)
 
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-project(faultproject VERSION 0.1.0 LANGUAGES C CXX)
+project(libfault VERSION 0.1.0 LANGUAGES C CXX)
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/version.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/fault/version.h"
 )
 
-option(FAULT_BUILD_SHARED "Build fault as a shared library" ON)
+set(FAULT_SOURCES
+    src/fault.cpp
+    include/fault/fault.hpp
+    include/fault/fault.h
+    include/fault/attributes.h
+    include/fault/config.h
+)
+option(FAULT_BUILD_SHARED "Build fault as a shared library" OFF)
 if(FAULT_BUILD_SHARED)
-    message(STATUS "Building fault as shared library")
-    add_library(fault SHARED
-        src/fault.cpp
-    )
+    message(STATUS "Building libfault as shared library")
+    add_library(fault SHARED ${FAULT_SOURCES})
 else()
-    message(STATUS "Building fault as static library")
-    add_library(fault STATIC
-        src/fault.cpp
-    )
+    message(STATUS "Building libfault as static library")
+    add_library(fault STATIC ${FAULT_SOURCES})
 endif()
 
 add_library(fault::fault ALIAS fault)
+
+add_library(fault_adapter INTERFACE)
+add_library(fault::fault_adapter ALIAS fault_adapter)
+target_link_libraries(fault_adapter INTERFACE fault cpptrace::cpptrace)
 
 add_subdirectory(extern) # cpptrace
 

@@ -184,9 +184,6 @@ FAULT_EXPORT bool set_shutdown_request() noexcept;
  */
 [[nodiscard]] FAULT_EXPORT bool can_collect_safe_trace() noexcept;
 
-// Use this to immediately shutdown the application and perform similar actions as the fault
-// handlers, such as error message to stderr, fatal popup and write report.
-
 /**
  * @brief Use this to immediately shutdown the application and perform similar actions as the
  * fault handlers, such as printing error message to stderr, displaying a fatal popup and write
@@ -195,8 +192,8 @@ FAULT_EXPORT bool set_shutdown_request() noexcept;
  *
  * @param message message to be displayed on report, stderr and popup
  * @param exceptionTrace optional trace. If set, the report will use it instead of a default
- * generated one. Example: provide a trace right handling an exception using
- * cpptrace::raw_trace_from_current_exception().resolve_object_trace()
+ * generated one. Example: provide a trace after handling an exception using
+ * cpptrace::raw_trace_from_current_exception().resolve_object_trace() (converting to ObjectTrace)
  *
  */
 [[noreturn]] FAULT_EXPORT void panic(
@@ -257,7 +254,7 @@ inline void expect(bool cond, std::string_view userMsg = {}
                    std::source_location loc = std::source_location::current()
 #endif
 ) {
-    if (!cond) {
+    if (!cond) [[unlikely]] {
 #if FAULT_USE_LOCATIONS
         expect_at(false, userMsg, loc);
 #else

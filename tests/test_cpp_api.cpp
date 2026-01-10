@@ -1,11 +1,15 @@
-#include <format>
 #include <iostream>
 #include <stdexcept>
 #include <thread>
 
+// clang-format off
+#include <fault/adapter/stacktrace.hpp>
+#include <fault/fault.hpp>
+// clang-format on
+
+#include <cpptrace/basic.hpp>
 #include <cpptrace/cpptrace.hpp>
 #include <cpptrace/from_current.hpp>
-#include <fault/fault.hpp>
 
 void bar() {
     throw std::logic_error("This shouldn't have happened");

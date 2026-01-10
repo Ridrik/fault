@@ -31,6 +31,8 @@
 #include <cpptrace/from_current.hpp>
 #include <cpptrace/utils.hpp>
 
+#include "fault/adapter/stacktrace.hpp"
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 // clang-format off
@@ -54,6 +56,8 @@
 
 namespace fault {
 
+namespace utils {
+
 namespace {
 
 static_assert(std::atomic<int>::is_always_lock_free,
@@ -62,35 +66,11 @@ static_assert(std::atomic<int>::is_always_lock_free,
 
 #define FORCE_INLINE inline __attribute__((always_inline))
 
-namespace utils {
-
 inline std::string_view getSafeView(const char* ptr) noexcept {
     if (ptr == nullptr) {
         return "";
     }
     return std::string_view{ptr};
-}
-
-ObjectTrace fromCppTrace(const cpptrace::object_trace& cppTrace) {
-    ObjectTrace trace;
-    trace.frames.reserve(cppTrace.frames.size());
-    for (const auto& cppFrame : cppTrace.frames) {
-        trace.frames.push_back(Frame{.rawAddress = cppFrame.raw_address,
-                                     .objAddress = cppFrame.object_address,
-                                     .objPath = cppFrame.object_path});
-    }
-    return trace;
-}
-
-cpptrace::object_trace toCppTrace(const ObjectTrace& trace) {
-    cpptrace::object_trace cppTrace;
-    cppTrace.frames.reserve(trace.frames.size());
-    for (const auto& frame : trace.frames) {
-        cppTrace.frames.push_back(cpptrace::object_frame{.raw_address = frame.rawAddress,
-                                                         .object_address = frame.objAddress,
-                                                         .object_path = frame.objPath});
-    }
-    return cppTrace;
 }
 
 constexpr const char* const kHexChars = "0123456789abcdef";
@@ -372,7 +352,11 @@ ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fileNam
     }
 }
 
+}  // namespace
+
 }  // namespace utils
+
+namespace {
 
 namespace _internal {
 
@@ -1621,9 +1605,9 @@ struct TerminateHandling {
         }
 
         if (TerminateHandling::terminateHook != nullptr) {
-            ObjectTrace faultTrace = utils::fromCppTrace(trace);
+            ObjectTrace faultTrace = adapter::from_cpptrace(trace);
             TerminateHandling::terminateHook(userMessage, faultTrace);
-            trace = utils::toCppTrace(faultTrace);
+            trace = adapter::to_cpptrace(faultTrace);
         }
         if (hasAnySignalBeenTriggered()) {
             ExitHandler::parkThreadForever();
@@ -1731,7 +1715,7 @@ InitResult init(const Config& config) noexcept {
 void panic(std::string_view message, const std::optional<ObjectTrace>& exceptionTrace) {
     std::optional<cpptrace::object_trace> optCppObjTrace{std::nullopt};
     if (exceptionTrace.has_value()) {
-        optCppObjTrace = utils::toCppTrace(*exceptionTrace);
+        optCppObjTrace = adapter::to_cpptrace(*exceptionTrace);
     }
     TerminateHandling::controlledShutdown(message, _internal::config.panic.printMsgToStdErr,
                                           _internal::config.panic.writeReport, optCppObjTrace,

@@ -1,0 +1,42 @@
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -readability-magic-numbers,
+  -readability-identifier-length,
+  -readability-math-missing-parentheses,
+  -modernize-use-trailing-return-type,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-pro-type-union-access,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -bugprone-suspicious-stringview-data-usage,
+  -bugprone-easily-swappable-parameters
+WarningsAsErrors: ''
+FormatStyle: 'file'
+HeaderFilterRegex: 'src/'
+
+CheckOptions:
+  readability-identifier-naming.VariableCase: camelBack
+  readability-identifier-naming.VariableIgnoredRegexp: '^[A-Z]$'
+  readability-identifier-naming.PublicMemberCase: camelBack
+  readability-identifier-naming.PrivateMemberCase: camelBack
+  readability-identifier-naming.PrivateMemberSuffix: _
+  readability-identifier-naming.ProtectedMemberCase: camelBack
+  readability-identifier-naming.ProtectedMemberSuffix: _
+  readability-identifier-naming.ParameterCase: camelBack
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.EnumConstantCase: CamelCase
+  readability-identifier-naming.EnumConstantPrefix: k
+  readability-identifier-naming.ConstexprVariableCase: CamelCase
+  readability-identifier-naming.ConstexprVariablePrefix: k
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
