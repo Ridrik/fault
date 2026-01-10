@@ -454,7 +454,7 @@ struct Config {
             config.crashDir, fileNameStr, crashPath, config.prefixDateOnFilename, tmInfo, ".log");
 #if defined(_WIN32)
         if (config.generateMiniDumpWindows &&
-            utils::setCrashWriteDir(config.crashDir, "crash_dump", Windows::dumpPath,
+            utils::setCrashWriteDir(config.crashDir, fileNameStr, Windows::dumpPath,
                                     config.prefixDateOnFilename, tmInfo,
                                     ".dmp") == ConfigWarning::kNone) {
             Windows::canWriteDump = true;
