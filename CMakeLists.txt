@@ -16,7 +16,7 @@ set(FAULT_SOURCES
     include/fault/attributes.h
     include/fault/config.h
 )
-option(FAULT_BUILD_SHARED "Build fault as a shared library" OFF)
+option(FAULT_BUILD_SHARED "Build libfault as a shared library" ${BUILD_SHARED_LIBS})
 if(FAULT_BUILD_SHARED)
     message(STATUS "Building libfault as shared library")
     add_library(fault SHARED ${FAULT_SOURCES})
@@ -56,7 +56,7 @@ endif()
 
 target_link_libraries(fault PRIVATE cpptrace::cpptrace)
 
-set(FAULT_LOCATIONS "DEFAULT" CACHE STRING "Source location metadata for fault::expect(): ON, OFF, or DEFAULT(OFF on non-debug/NDEBUG)")
+set(FAULT_LOCATIONS "DEFAULT" CACHE STRING "libfault source location metadata for fault::expect(): ON, OFF, or DEFAULT(OFF on non-debug/NDEBUG)")
 
 if(FAULT_LOCATIONS STREQUAL "ON")
     target_compile_definitions(fault PUBLIC FAULT_ENABLE_LOCATIONS)
@@ -64,7 +64,7 @@ elseif(FAULT_LOCATIONS STREQUAL "OFF")
     target_compile_definitions(fault PUBLIC FAULT_DISABLE_LOCATIONS)
 endif()
 
-set(FAULT_ASSERTIONS "DEFAULT" CACHE STRING "Library assertions: ON, OFF, or DEFAULT(OFF on non-debug/NDEBUG)")
+set(FAULT_ASSERTIONS "DEFAULT" CACHE STRING "libfault assertions: ON, OFF, or DEFAULT(OFF on non-debug/NDEBUG)")
 
 if(FAULT_ASSERTIONS STREQUAL "ON")
     target_compile_definitions(fault PUBLIC FAULT_FORCE_ASSERTIONS_ON)

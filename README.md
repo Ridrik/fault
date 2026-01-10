@@ -48,6 +48,9 @@ FetchContent_MakeAvailable(fault)
 target_link_libraries(my_app PRIVATE fault::fault)
 ```
 
+By default, libfault is fetched as static library (or whatever value ${BUILD_SHARED_LIBS} holds). Users may override it using FAULT_BUILD_SHARED=On/Off.
+(Note: When building from source, cpptrace is fetched as part of it if FAULT_BUNDLE_CPPTRACE=On is selected (default), unless the target already exists. The same configurational options for cpptrace apply)
+
 
 ### 2. Basic usage
 
