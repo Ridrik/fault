@@ -81,7 +81,12 @@ endif()
 include(GenerateExportHeader)
 generate_export_header(fault BASE_NAME FAULT EXPORT_FILE_NAME include/fault/fault_export.h)
 
-if(PROJECT_IS_TOP_LEVEL)
+option(FAULT_INSTALL "Generate install rules for libfault" ${PROJECT_IS_TOP_LEVEL})
+
+if(FAULT_INSTALL)
+    message(STATUS "libfault: Install rules enabled")
     include(cmake/install.cmake)
     add_subdirectory(tests)
+else()
+    message(STATUS "libfault: Skipping install rules")
 endif()
