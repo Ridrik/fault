@@ -110,7 +110,7 @@ constexpr void safeAppend(char* buffer, std::size_t& offset, std::size_t capacit
                           std::uintptr_t value) noexcept {
     std::array<char, 19> buf{};
     safeWriteHex(value, buf);
-    safeAppend(buffer, offset, capacity, buf.data(), buf.size());
+    safeAppend(buffer, offset, capacity, buf.data(), 18);
 }
 
 void itoaSafeAppend(char* buffer, std::size_t& offset, std::size_t capacity,
@@ -515,7 +515,7 @@ void writeToStdErr(std::string_view message) {
 
 bool writeReport(std::string_view errContext,
                  const std::optional<cpptrace::object_trace>& exceptionTrace = std::nullopt,
-                 bool writeResolved = false) {
+                 bool writeResolved = false, bool isRestrictive = true) {
     static std::atomic<bool> hasBeenHandled{false};
     bool expected{false};
     if (!hasBeenHandled.compare_exchange_strong(expected, true)) {
@@ -593,12 +593,11 @@ bool writeReport(std::string_view errContext,
             utils::safePrint("\n", fd);
         }
         utils::safePrint("(Safe unwind used)\n", fd);
-    } else if (config.useUnsafeStacktraceOnSignalFallback) {
-        // The program is inside restrictive signal handling, and no guaranteed safe trace can
-        // be collected. Allow for risky operation by collecting the object trace normally:
-        // Should work reliably inside windows vectoring handler (a bit more permissive), while
-        // in linux posix it risks issues like deadlock if the reason for signal was heap
-        // corruption or if any lock (e.g I/O) is being held. The risk is allowed to exist
+    } else if (!isRestrictive || config.useUnsafeStacktraceOnSignalFallback) {
+        // If the program is inside restrictive signal handling, it will attempt here to collect a
+        // regular trace. Should work reliably inside windows vectoring handler (a bit more
+        // permissive), while in linux posix it risks issues like deadlock if the reason for signal
+        // was heap corruption or if any lock (e.g I/O) is being held. The risk is allowed to exist
         // noting that an alarm is set before hand should this deadlock. ()
         const auto objectTrace = cpptrace::generate_object_trace();
         for (const cpptrace::object_frame& frame : objectTrace) {
@@ -630,7 +629,7 @@ void showPopUp(const char* title, const char* message) noexcept {
     }
 #ifdef _WIN32
     std::array<wchar_t, 128> titleWide{};
-    std::array<wchar_t, 1024> messageWide{};
+    std::array<wchar_t, 2048> messageWide{};
     utils::utf8ToUtf16Stack(title, titleWide.data(), titleWide.size());
     utils::utf8ToUtf16Stack(message, messageWide.data(), messageWide.size());
     MessageBoxW(nullptr, messageWide.data(), titleWide.data(),
@@ -725,13 +724,14 @@ const char* getExceptionString(DWORD code) noexcept {
 struct WindowsHandling {
    private:
     static inline std::array<char, 128> titleBuffer{};
-    static inline std::array<char, 1024> finalBuffer{};
+    static inline std::array<char, 2048> finalBuffer{};
     static inline std::size_t offsetForMsg{0};
     static inline std::atomic<bool> hasAnyCodeBeenReceived{false};
     static inline std::atomic<bool> reportDone{false};
     static inline std::atomic<bool> popUpReached{false};
     static inline bool wasDumpWritten{false};
     static inline bool showPopUp{true};
+    static inline bool isRestrictive{true};
     static thread_local inline std::sig_atomic_t tryCount{0};
     static inline HANDLE hCrashEvent{nullptr};
     static inline HANDLE hWatchdogThread{nullptr};
@@ -827,7 +827,7 @@ struct WindowsHandling {
         const auto written = writeReport
                                  ? ExitHandler::writeReport(
                                        std::string_view{WindowsHandling::finalBuffer.data(), size},
-                                       exceptionTrace, resolveTrace)
+                                       exceptionTrace, resolveTrace, WindowsHandling::isRestrictive)
                                  : false;
         if (printToStderr) {
             std::array<char, 2048> stdErrBfr{};
@@ -935,13 +935,15 @@ struct WindowsHandling {
         if (!WindowsHandling::checkPermissions()) {
             return;
         }
+        WindowsHandling::isRestrictive = true;
         WindowsHandling::showPopUp = _internal::config.showPopUp;
         std::size_t offset{0};
         WindowsHandling::writeSummaryMessageToBuffer(exceptionInfo, description, offset);
         constexpr bool kWriteReport{true};
         constexpr bool kResolveTrace{false};
+        constexpr std::optional<cpptrace::object_trace> kTrace{std::nullopt};
         WindowsHandling::commonActions(exceptionInfo, offset, _internal::config.printMsgToStdErr,
-                                       kWriteReport, std::nullopt, kResolveTrace);
+                                       kWriteReport, kTrace, kResolveTrace);
     }
 
     static void initHandles() noexcept {
@@ -997,6 +999,7 @@ struct WindowsHandling {
             ExitHandler::shutdown(code);
             FAULT_UNREACHABLE();
         }
+        WindowsHandling::isRestrictive = false;
         WindowsHandling::showPopUp = showPopUp;
         std::size_t offset{0};
         constexpr PEXCEPTION_POINTERS kPExceptionInfo{nullptr};
@@ -1205,6 +1208,7 @@ struct LinuxHandling {
     static thread_local inline std::sig_atomic_t tryCount{};
     static inline std::sig_atomic_t signal{-1};
     static inline std::atomic<bool> popUpReached{false};
+    static inline bool isRestrictive{true};
     static inline bool showPopUp{true};
     static inline bool shouldReRaiseSignal{true};
 
@@ -1363,7 +1367,7 @@ struct LinuxHandling {
         const auto written = writeReport
                                  ? ExitHandler::writeReport(
                                        std::string_view{LinuxHandling::finalBuffer.data(), size},
-                                       exceptionTrace, resolveTrace)
+                                       exceptionTrace, resolveTrace, LinuxHandling::isRestrictive)
                                  : false;
         if (printToStderr) {
             std::array<char, 2048> stdErrBfr{};
@@ -1414,6 +1418,7 @@ struct LinuxHandling {
     [[noreturn]] static void linuxSignalHandler(int sig, siginfo_t* info, void* uctx) {
         LinuxHandling::checkPermissions();
         LinuxHandling::signal = sig;
+        LinuxHandling::isRestrictive = true;
         LinuxHandling::showPopUp = _internal::config.showPopUp;
         LinuxHandling::shouldReRaiseSignal = _internal::config.signal.raiseDefaultAfterwards;
         std::size_t offset{0};
@@ -1422,8 +1427,9 @@ struct LinuxHandling {
         LinuxHandling::writeReportDetailsToBuffer(static_cast<const ucontext_t*>(uctx), offset);
         constexpr bool kResolveTrace{false};
         constexpr std::optional<cpptrace::object_trace> kTrace{std::nullopt};
-        LinuxHandling::commonActions(offset, _internal::config.printMsgToStdErr, true, kTrace,
-                                     kResolveTrace);
+        constexpr bool kWriteReport{true};
+        LinuxHandling::commonActions(offset, _internal::config.printMsgToStdErr, kWriteReport,
+                                     kTrace, kResolveTrace);
         FAULT_UNREACHABLE();
     }
 
@@ -1465,6 +1471,7 @@ struct LinuxHandling {
         const std::optional<cpptrace::object_trace>& exceptionTrace, bool showPopUp,
         bool resolveTrace) {
         LinuxHandling::checkPermissions();
+        LinuxHandling::isRestrictive = false;
         LinuxHandling::signal = code;
         LinuxHandling::showPopUp = showPopUp;
         LinuxHandling::shouldReRaiseSignal = true;
