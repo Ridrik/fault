@@ -45,11 +45,18 @@
 #endif
 #endif
 
-// unlikely
+// expect false
 #if defined(__GNUC__) || defined(__clang__)
-#define FAULT_UNLIKELY(expr) __builtin_expect(!!(expr), 0)
+#define FAULT_EXPECT_FALSE(expr) __builtin_expect(!!(expr), 0)
 #else
-#define FAULT_UNLIKELY(expr) (expr)
+#define FAULT_EXPECT_FALSE(expr) (expr)
+#endif
+
+// unlikely
+#if defined(__cplusplus) && __cplusplus >= 202002L
+#define FAULT_UNLIKELY [[unlikely]]
+#else
+#define FAULT_UNLIKELY
 #endif
 
 // unreachable

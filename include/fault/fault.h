@@ -82,10 +82,11 @@ FAULT_NORETURN FAULT_EXPORT void fault_panic_at(const char* expr, const char* fi
                                                 const char* func, const char* userMsg);
 
 static inline void fault_verify(bool cond, const char* message) {
-    if (FAULT_UNLIKELY(!(cond))) {
-        fault_panic(message);
-        FAULT_UNREACHABLE();
-    }
+    if (FAULT_EXPECT_FALSE(!(cond)))
+        FAULT_UNLIKELY {
+            fault_panic(message);
+            FAULT_UNREACHABLE();
+        }
 }
 
 // NOLINTBEGIN
@@ -103,20 +104,22 @@ static inline void fault_verify(bool cond, const char* message) {
 #endif
 #endif
 
-#define FAULT_EXPECT_AT(cond, ...)                     \
-    do {                                               \
-        if (FAULT_UNLIKELY(!(cond))) {                 \
-            FAULT_EXPECT_AT_IMPL(cond, ##__VA_ARGS__); \
-            FAULT_UNREACHABLE();                       \
-        }                                              \
+#define FAULT_EXPECT_AT(cond, ...)                         \
+    do {                                                   \
+        if (FAULT_EXPECT_FALSE(!(cond)))                   \
+            FAULT_UNLIKELY {                               \
+                FAULT_EXPECT_AT_IMPL(cond, ##__VA_ARGS__); \
+                FAULT_UNREACHABLE();                       \
+            }                                              \
     } while (0)
 
-#define FAULT_EXPECT(cond, ...)                     \
-    do {                                            \
-        if (FAULT_UNLIKELY(!(cond))) {              \
-            FAULT_EXPECT_IMPL(cond, ##__VA_ARGS__); \
-            FAULT_UNREACHABLE();                    \
-        }                                           \
+#define FAULT_EXPECT(cond, ...)                         \
+    do {                                                \
+        if (FAULT_EXPECT_FALSE(!(cond)))                \
+            FAULT_UNLIKELY {                            \
+                FAULT_EXPECT_IMPL(cond, ##__VA_ARGS__); \
+                FAULT_UNREACHABLE();                    \
+            }                                           \
     } while (0)
 
 #if FAULT_ASSERT_ACTIVE

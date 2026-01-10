@@ -1827,13 +1827,14 @@ FaultInitResult fault_init(const FaultConfig* config) FAULT_NOEXCEPT {
 
 void fault_panic(const char* message) {
     constexpr std::optional<fault::ObjectTrace> kNoExceptionTrace{std::nullopt};
-    fault::panic(std::string_view{message}, kNoExceptionTrace);
+    fault::panic(fault::utils::getSafeView(message), kNoExceptionTrace);
     FAULT_UNREACHABLE();
 }
 
 void fault_panic_at(const char* expr, const char* file, uint32_t line, const char* func,
                     const char* userMsg) {
-    fault::panic_at(expr, file, line, func, userMsg);
+    fault::panic_at(fault::utils::getSafeView(expr), fault::utils::getSafeView(file), line,
+                    fault::utils::getSafeView(func), fault::utils::getSafeView(userMsg));
     FAULT_UNREACHABLE();
 }
 
