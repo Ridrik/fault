@@ -792,7 +792,7 @@ struct WindowsHandling {
         return true;
     }
 
-    static bool writeMiniDump(EXCEPTION_POINTERS* exceptionPtrs = nullptr) {
+    static bool writeMiniDump(const PEXCEPTION_POINTERS exceptionPtrs = nullptr) {
         std::array<wchar_t, _internal::Config::Windows::dumpPath.size()> dumpPathW{};
         const HANDLE hFile = utils::utf8ToUtf16Stack(_internal::Config::Windows::dumpPath.data(),
                                                      dumpPathW.data(), dumpPathW.size())
@@ -858,7 +858,7 @@ struct WindowsHandling {
         WindowsHandling::reportDone = true;
     }
 
-    static void writeSummaryMessageToBuffer(struct _EXCEPTION_POINTERS* pExc, std::string_view msg,
+    static void writeSummaryMessageToBuffer(const PEXCEPTION_POINTERS pExc, std::string_view msg,
                                             std::size_t& offset) noexcept {
         {
             std::size_t titleOffset{0};
@@ -914,7 +914,7 @@ struct WindowsHandling {
                           WindowsHandling::finalBuffer.size());
     }
 
-    static void commonActions(PEXCEPTION_POINTERS exceptionInfo, std::size_t offset,
+    static void commonActions(const PEXCEPTION_POINTERS exceptionInfo, std::size_t offset,
                               bool printToStderr, bool writeReport,
                               const std::optional<cpptrace::object_trace>& exceptionTrace,
                               bool resolveTrace) {
@@ -930,7 +930,7 @@ struct WindowsHandling {
         WindowsHandling::popUpAction(kExit);
     }
 
-    static void windowsCommonProcessSignalEvent(PEXCEPTION_POINTERS exceptionInfo, DWORD code,
+    static void windowsCommonProcessSignalEvent(const PEXCEPTION_POINTERS exceptionInfo,
                                                 std::string_view description) {
         if (!WindowsHandling::checkPermissions()) {
             return;
@@ -959,13 +959,13 @@ struct WindowsHandling {
         constexpr DWORD kAbortCode{3};
         constexpr PEXCEPTION_POINTERS kNoContextPtr{nullptr};
         WindowsHandling::windowsCommonProcessSignalEvent(
-            kNoContextPtr, kAbortCode,
+            kNoContextPtr,
             "Abort called");  // trace, stdcerr error, gui popup
         ExitHandler::shutdown(kAbortCode);
         FAULT_UNREACHABLE();
     }
 
-    static LONG WINAPI windowsExceptionHandler(PEXCEPTION_POINTERS exceptionInfo) {
+    static LONG WINAPI windowsExceptionHandler(const PEXCEPTION_POINTERS exceptionInfo) {
         const DWORD code = exceptionInfo->ExceptionRecord->ExceptionCode;
         const bool fatal =
             code == EXCEPTION_STACK_OVERFLOW || code == EXCEPTION_ACCESS_VIOLATION ||
@@ -979,7 +979,7 @@ struct WindowsHandling {
         }
         const char* const description = getExceptionString(code);
         WindowsHandling::windowsCommonProcessSignalEvent(
-            exceptionInfo, code,
+            exceptionInfo,
             description);  // trace, stdcerr error, gui popup
         return EXCEPTION_EXECUTE_HANDLER;
     }
