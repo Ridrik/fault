@@ -174,7 +174,7 @@ FAULT_EXPORT bool set_shutdown_request() noexcept;
  * @brief Returns wether any shutdown request has been made.
  *
  */
-[[nodiscard]] FAULT_EXPORT bool has_shutdown_request() noexcept;
+FAULT_NODISCARD FAULT_EXPORT bool has_shutdown_request() noexcept;
 
 /**
  * @brief Returns wether a signal safe object trace can be collected. If false and option to
@@ -182,7 +182,7 @@ FAULT_EXPORT bool set_shutdown_request() noexcept;
  * Windows exception handlers
  *
  */
-[[nodiscard]] FAULT_EXPORT bool can_collect_safe_trace() noexcept;
+FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
 
 /**
  * @brief Use this to immediately shutdown the application and perform similar actions as the
