@@ -8,7 +8,7 @@ When a C++ application crashes, the default behavior is often a silent exit or a
 
 ### Key Features
 * **Native C & C++ Support:** Use the modern C++ API or the stable C-linkage interface for legacy projects.
-* **Unified Crash Handling:** Intercepts SIGSEGV, SIGFPE, SIGILL, and SIGABRT on Linux, and SEH Exceptions on Windows.
+* **Unified Crash Handling:** Intercepts SIGSEGV, SIGBUS, SIGILL, SIGFPE and SIGABRT on Linux, and main SEH Exception codes on Windows, such as EXCEPTION_STACK_OVERFLOW, EXCEPTION_ACCESS_VIOLATION, divisions by zero, illegal instructions or data misalignments.
 * **Async-Signal Safe (AS-Safe):** Prioritizes safe "Object Trace" generation on restrictive environments, or has safeguards for user requested unsafe generation. See below for more info.
 * **C++ Terminate Override:** Captures the stack trace of unhandled C++ exceptions before the runtime kills the process.
 * **Zero-Config Stack Traces:** Powered by `cpptrace` for high-quality, symbolicated traces.
