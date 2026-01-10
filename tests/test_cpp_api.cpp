@@ -76,9 +76,6 @@ int main() {
                             fault::panic(e.what(), fault::adapter::from_cpptrace(objectTrace));
                         });
 
-    cpptrace::generate_object_trace();
-    cpptrace::can_get_safe_object_frame();
-
     const auto result = add(5, 2);
 
     // Assertion: compiles on debug builds by default, with source location
