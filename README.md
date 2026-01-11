@@ -14,7 +14,7 @@ When a C++ application crashes, the default behavior is often a silent exit or a
 * **User provided minimal context:** For applications you'd like to distribute to others, `fault` provides users a fatal popup if a critical error occurs, instead of risking a silent and confusing crash.
 * **Zero-Config Stack Traces:** Powered by `cpptrace` for high-quality, symbolicated traces.
 * **Panic & Assert API:** Provides `fault::panic()`, `fault::expect()`, `fault::expect_at()`, `fault::verify()` and `FAULT_ASSERT` for explicit, fail-fast error handling, including lazy evaluated on-failure actions.
-* **Self-Contained:** Can be bundled as a single shared library with no external runtime dependencies for the consumer.
+* **Self-Contained:** Can be bundled as a single static or shared library with no external runtime dependencies for the consumer.
 * **User configurability:** Each fault action triggers report writing, user fatal Popups and summary message to terminal. User can switch these on/off independently for abnormal crashes, or user requested panic mode.
 
 ---
@@ -49,7 +49,7 @@ FetchContent_MakeAvailable(fault)
 target_link_libraries(my_app PRIVATE fault::fault)
 ```
 
-By default, `fault` is fetched as static library (or whatever value ${BUILD_SHARED_LIBS} holds). Users may override it using FAULT_BUILD_SHARED=On/Off.
+By default, `fault` is fetched either as dynamic or static library, depending on ${BUILD_SHARED_LIBS}. Users may override it using FAULT_BUILD_SHARED=On/Off (boolean).
 (Note: When building from source, cpptrace is fetched as part of it if FAULT_BUNDLE_CPPTRACE=On is selected (default), unless the target already exists. The same configurational options for cpptrace apply)
 
 ---
