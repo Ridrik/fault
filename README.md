@@ -300,7 +300,7 @@ int main() {
 
 `fault` provides the following utilities:
 
-1. Shutdown requests: if set, it registers SIGINT and SIGTERM to set shutdown requests. This allows users to check, on their code, whenever a termination request has come by simply calling **fault::has_shutdown_request**. Users may also set themselves a shutdown request by calling **fault::set_shutdown_request**, useful for multi-threaded applications.
+1. Shutdown requests: if set, it registers SIGINT and SIGTERM to set shutdown requests. This allows users to check, on their code, whenever a termination request has come by simply calling **fault::has_shutdown_request** (`fault_has_shutdown_request` for C users). Users may also set themselves a shutdown request by calling **fault::set_shutdown_request** (`fault_set_shutdown_request` for C users), useful for multi-threaded applications.
 2. **Symbol resolver** script, which can be found in `scripts/symbol_resolver.py`. It can resolve an object trace of the crash report given original .debug files in a subdirectory tree that can be mapped via the BUILD ID that the user gave to `fault` configuration. Alternately, if the fault happened on the same machine as the script, it can take directly the object paths reported in it.
 Example: `python scripts/symbol_resolver.py --use_same_paths=1 path/to/crash_report.log`. **Note** it uses addr2line to resolve the trace. Feel free to customize it to your needs.
 
@@ -351,7 +351,41 @@ With crash report:
 
 (...continues)
 
-Users can also find most 
+Other macros/functions available: **FAULT_ASSERT** (default for debug, always with source location), **FAULT_EXPECT**, **FAULT_EXPECT_AT** (always on, by default `EXPECT` has source location on debug builds only), **FAULT_VERIFY**. All these macros have a macro version with suffix "_C", standing for callbacks. Examples:
+
+**Note** For C++ users that want callback options, note that while you can use these versions reliably, it is recommended to use the embedded overloads in `fault::<function_name>` with a std::invokable.
+
+```c
+const char* on_panic(void* data) {
+    int* val = (int*)data;
+    if (*val == 404) {
+        return "Resource not found";
+    }
+    return "Unknown system failure";
+}
+
+int main() {
+    FaultConfig config = fault_get_default_config();
+    config.appName = "MyApp";
+    config.buildID = "MyBuildID";
+    config.crashDir = "crash";
+    config.useUnsafeStacktraceOnSignalFallback = true;
+    const FaultInitResult res =
+        fault_init(&config);  // if no config changes wanted, user can call fault_init(NULL)
+    if (!res.success) {
+        printf("Failed to init fault\n");
+        return 1;
+    }
+    int status = 404;
+    FAULT_VERIFY_C(status == 200, on_panic, &status);
+    FAULT_EXPECT_C(status == 200, on_panic, &status);
+    FAULT_EXPECT_AT_C(status == 200, on_panic, &status);
+    fault_verify_c(status == 200, on_panic, &status);
+
+    printf("C API test passed\n");
+    return 0;
+}
+```
 
 ---
 
