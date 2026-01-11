@@ -260,7 +260,7 @@ On debug build will abort with:
 
 **Note** On Linux, if reraise signal is set, all these panic/assertions will end with reraising default SIGABRT, which usually prints the default abort message with core dumped (if system configured). On Windows, Minidump is instead explicitly generated if set on configuration, and afterwards the program is terminated. This follows the same final step as std::terminate handling.
 
-**Note** All panic and assertions have overloads with invokable functions for deferred evaluation. In addition, there are also overloads or versions available for with formatted args, as long as the user includes `fault/format.hpp` or the general `fault/fault.hpp`. It is overloaded for `fault::verify`, `fault::expect` and `fault::expect_at`. Users may also choose the macro versions `FAULT_EXPECT_FMT` and `FAULT_EXPECT_AT_FMT`. For **`fault::panic`**, `fault::panic_fmt` is available to format strings.
+**Note** All panic and assertions have overloads with invokable functions for deferred evaluation. In addition, there are also overloads or versions available for with formatted args, as long as the user includes `fault/format.hpp` or the general `fault/fault.hpp`. It is overloaded for `fault::panic`, `fault::verify`, `fault::expect` and `fault::expect_at`. Users may also choose the macro versions `FAULT_EXPECT_FMT` and `FAULT_EXPECT_AT_FMT`.
 
 # Panic
 
@@ -284,12 +284,13 @@ int main() {
 
     cpptrace::try_catch([] { foo(); },
                         [](const std::exception& e) {
-                            const auto objectTrace =
+                            const auto cppObjectTrace =
                                 cpptrace::raw_trace_from_current_exception().resolve_object_trace();
-
-                            fault::panic(e.what(), fault::adapter::from_cpptrace(objectTrace));
-                            // If no override trace is desired, version with format args also exists:
-                            // fault::panic_fmt("Caught following exception: {}", e.what());
+                            // needs #include "fault/adapter/stacktrace.hpp"
+                            const auto objectTrace = fault::adapter::from_cpptrace(cppObjectTrace);
+                            fault::panic(objectTrace, "Exception caught: {}", e.what());
+                            // Or, without trace override
+                            fault::panic("Exception caught: {}", e.what());
                         });
 }
 

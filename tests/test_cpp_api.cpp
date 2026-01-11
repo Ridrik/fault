@@ -70,10 +70,12 @@ int main() {
 
     cpptrace::try_catch([] { foo(); },
                         [](const std::exception& e) {
-                            const auto objectTrace =
+                            const auto cppObjectTrace =
                                 cpptrace::raw_trace_from_current_exception().resolve_object_trace();
-
-                            fault::panic(e.what(), fault::adapter::from_cpptrace(objectTrace));
+                            const auto objectTrace = fault::adapter::from_cpptrace(cppObjectTrace);
+                            fault::panic(objectTrace, "Exception caught: {}", e.what());
+                            // Or, without trace override
+                            fault::panic("Exception caught: {}", e.what());
                         });
 
     const auto result = add(5, 2);

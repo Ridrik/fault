@@ -1719,9 +1719,9 @@ InitResult init(const Config& config) noexcept {
     return tryInit(config);
 }
 
-void panic(std::string_view message, const std::optional<ObjectTrace>& exceptionTrace) {
+void panic_impl(std::string_view message, const ObjectTrace* exceptionTrace) {
     std::optional<cpptrace::object_trace> optCppObjTrace{std::nullopt};
-    if (exceptionTrace.has_value()) {
+    if (exceptionTrace != nullptr) {
         optCppObjTrace = adapter::to_cpptrace(*exceptionTrace);
     }
     TerminateHandling::controlledShutdown(message, _internal::config.panic.printMsgToStdErr,
@@ -1752,8 +1752,8 @@ void panic_at(std::string_view expr, std::string_view file, std::uint32_t line,
     utils::safeAppend(msg.data(), offset, msg.size(), " in ");
     utils::safeAppend(msg.data(), offset, msg.size(), func.data(), func.size());
 
-    constexpr std::optional<ObjectTrace> kNoExceptionTrace{std::nullopt};
-    panic(std::string_view{msg.data(), offset}, kNoExceptionTrace);
+    constexpr const ObjectTrace* kNoExceptionTrace{nullptr};
+    panic_impl(std::string_view{msg.data(), offset}, kNoExceptionTrace);
     FAULT_UNREACHABLE();
 }
 
@@ -1826,8 +1826,8 @@ FaultInitResult fault_init(const FaultConfig* config) FAULT_NOEXCEPT {
 }
 
 void fault_panic(const char* message) {
-    constexpr std::optional<fault::ObjectTrace> kNoExceptionTrace{std::nullopt};
-    fault::panic(fault::utils::getSafeView(message), kNoExceptionTrace);
+    constexpr const fault::ObjectTrace* kNoExceptionTrace{nullptr};
+    fault::panic_impl(fault::utils::getSafeView(message), kNoExceptionTrace);
     FAULT_UNREACHABLE();
 }
 

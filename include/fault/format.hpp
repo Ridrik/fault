@@ -35,12 +35,16 @@
 
 namespace fault {
 
-/**
- * @brief panic version with format string
- */
 template <typename... Args>
-FAULT_NORETURN inline void panic_fmt(std::format_string<Args...> fmt, Args&&... args) {
-    panic(std::format(fmt, std::forward<Args>(args)...), std::nullopt);
+FAULT_NORETURN inline void panic(std::format_string<Args...> fmt, Args&&... args) {
+    panic_impl(std::format(fmt, std::forward<Args>(args)...), nullptr);
+    FAULT_UNREACHABLE();
+}
+
+template <typename... Args>
+FAULT_NORETURN inline void panic(const ObjectTrace& trace, std::format_string<Args...> fmt,
+                                 Args&&... args) {
+    panic_impl(std::format(fmt, std::forward<Args>(args)...), &trace);
     FAULT_UNREACHABLE();
 }
 
@@ -50,7 +54,7 @@ FAULT_NORETURN inline void panic_fmt(std::format_string<Args...> fmt, Args&&... 
 template <typename... Args>
 inline void verify(bool cond, std::format_string<Args...> fmt, Args&&... args) {
     if (!cond) [[unlikely]] {
-        panic(std::format(fmt, std::forward<Args>(args)...));
+        panic_impl(std::format(fmt, std::forward<Args>(args)...));
         FAULT_UNREACHABLE();
     }
 }

@@ -189,6 +189,15 @@ FAULT_NODISCARD FAULT_EXPORT bool has_shutdown_request() noexcept;
 FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
 
 /**
+ * @brief panic implementation
+ *
+ * @param message message to be displayed on report, stderr and popup
+ * @param exceptionTrace Optional bject trace to be logged instead of default generated one.
+ */
+[[noreturn]] FAULT_EXPORT void panic_impl(std::string_view message,
+                                          const ObjectTrace* exceptionTrace = nullptr);
+
+/**
  * @brief Use this to immediately shutdown the application and perform similar actions as the
  * fault handlers, such as printing error message to stderr, displaying a fatal popup and write
  * report with metadata and object trace. On Linux, default abort is raised afterwards, whereas on
@@ -200,8 +209,21 @@ FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
  * cpptrace::raw_trace_from_current_exception().resolve_object_trace() (converting to ObjectTrace)
  *
  */
-[[noreturn]] FAULT_EXPORT void panic(
-    std::string_view message, const std::optional<ObjectTrace>& exceptionTrace = std::nullopt);
+[[noreturn]] inline FAULT_EXPORT void panic(std::string_view message) {
+    panic_impl(message, nullptr);
+    FAULT_UNREACHABLE();
+}
+
+/**
+ * @brief panic version with trace override for report.
+ *
+ * @param trace Object trace to be logged instead of default generated one.
+ * @param message message to be displayed on report, stderr and popup
+ */
+[[noreturn]] inline FAULT_EXPORT void panic(const ObjectTrace& trace, std::string_view message) {
+    panic_impl(message, &trace);
+    FAULT_UNREACHABLE();
+}
 
 /**
  * @brief Panic version using metadata information, for invariant failures with source location.
