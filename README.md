@@ -228,7 +228,7 @@ A fake frame is put in the middle, labelled "====== UPSTREAM ======" for user vi
 
 `fault` also allows users to explicitly abort the program with similar actions and reports as the signal/termination handlers. Namely, the user may:
 
-1. `**panic**` panic may be called at any point to display terminal message, user popup, reports and dumps, before aborting the program.
+1. **`panic`** panic may be called at any point to display terminal message, user popup, reports and dumps, before aborting the program.
 2. **FAULT_ASSERT** fault assert is an assertion macro that checks for invariants, and panics if the assertion fails, displaying location information. By default, it only compiles in debug builds, but may be overriden by using `FAULT_ASSERTIONS=ON/OFF/DEFAULT` (as strings)
 3. **fault::expect**, **fault::expect_at**, **FAULT_EXPECT**, **FAULT_EXPECT_AT**. Similar to assertions, it performs invariant checks, panicking if failing. However, these are present also in release builds. **fault::expect_at** always displays location information (line, function, file), whereas, by default, **fault::expect** hides them on non-debug builds. Users may override `fault::expect` location memory by using `FAULT_LOCATIONS=ON/OFF/DEFAULT` (as strings)
 4. **fault::verify**. Similar to the above, but it is present in any build type, and will never show location information.
@@ -253,6 +253,11 @@ int main() {
 
     // Assertion: compiles on debug builds by default, with source location
     FAULT_ASSERT(result == 7, "Math is broken");
+    FAULT_ASSERT(result == 7, "Math is broken, expected {}, got {}", 7, result);
+    FAULT_ASSERT(result == 7, [&] { 
+        doSomething();
+        const auto res = getSomeContext();
+        return std::format("math is broken. Context: {}", res.to_string()); });
 
     // Expect: Always on, location information by default on debug builds
     fault::expect(result == 7, "Math is broken");
@@ -261,7 +266,7 @@ int main() {
     fault::expect(result == 7, [&] {
         return std::format(
             "This is a large formatted string on the heap that prints a complex context struct {}. This callable "
-            "provides lazy evaluation (only formats string on failure) and allows for follow up actions, if desired",
+            "provides deferred evaluation (only formats string on failure) and allows for follow up actions, if desired",
             context.to_string())
     });
 
