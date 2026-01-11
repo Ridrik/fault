@@ -62,7 +62,7 @@ Initializing `fault` is done by a simple call, taking configuration parameters s
 
 #include <iostream>
 
-#include <fault/fault.hpp>
+#include <fault/fault.hpp> // Or #include <fault/core.hpp> if no <format> options wanted
 
 void foo() {
     volatile int* p{nullptr};
@@ -240,7 +240,7 @@ int main() {
 
     // Always on, never with source location
     fault::verify(result == 7, "Math is broken");
-    fault::verify(result == 7, "Math is broken. Result is {}", result); // Works for verify since it doesn't take source info
+    fault::verify(result == 7, "Math is broken. Result is {}", result); // verify, verify_at and its macros (including FAULT_ASSERT) have overloads or versions for format strings
     fault::verify(result == 7, [&] { const auto res = getSomeContext(); return res.print(); });
     FAULT_VERIFY(result == 7);
 
@@ -259,7 +259,7 @@ On debug build will abort with:
 
 **Note** On Linux, if reraise signal is set, all these panic/assertions will end with reraising default SIGABRT, which usually prints the default abort message with core dumped (if system configured). On Windows, Minidump is instead explicitly generated if set on configuration, and afterwards the program is terminated. This follows the same final step as std::terminate handling.
 
-**Note** All panic and assertions have overloads with invokable functions for deferred evaluation. In addition, there are also versions available for each with formatted args, as long as the user includes `fault/format.hpp` or the general `fault/fault.hpp`. It is overloaded for `fault::verify`, whereas, for `fault::expect` and `fault::expect_at`, the equivalent `FAULT_EXPECT_FMT` and `FAULT_EXPECT_AT_FMT` macros are available (I've not been able to make them regular functions yet without annoying the user in having to explictly calling std::source_location::current(), since format args require to be positioned at the end of a function).
+**Note** All panic and assertions have overloads with invokable functions for deferred evaluation. In addition, there are also overloads or versions available for with formatted args, as long as the user includes `fault/format.hpp` or the general `fault/fault.hpp`. It is overloaded for `fault::verify`, `fault::expect` and `fault::expect_at`. Users may also choose the macro versions `FAULT_EXPECT_FMT` and `FAULT_EXPECT_AT_FMT`. For **fault::panic**, `fault::panic_fmt` is available to format strings.
 
 # Panic
 
