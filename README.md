@@ -229,8 +229,7 @@ int main() {
     fault::expect(result == 7, [&] {
         return std::format(
             "This is a large formatted string on the heap that prints a complex context struct {}. This callable "
-            "provides lazy evaluation (only formats string on failure) for those who prefer not to "
-            "use macros",
+            "provides lazy evaluation (only formats string on failure) and allows for follow up actions, if desired",
             context.to_string())
     });
 
