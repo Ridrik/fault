@@ -1,6 +1,6 @@
 # `fault`
 
-`fault` is a lightweight crash reporting and panic library for C and C++, implemented in C++20. It provides a unified interface for capturing object traces when things go wrong, such as segmentation faults on Linux, unhandled exceptions on Windows, std::terminate, or explicit panics and assertions.
+`fault` is a lightweight crash reporting and panic library for C and C++, implemented in C++20. It provides a unified interface for capturing object traces and alert users when things go wrong, such as segmentation faults on Linux, unhandled SEH exceptions on Windows, std::terminate, or explicit panics and assertions.
 
 ## Description
 
