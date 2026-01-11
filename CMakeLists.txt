@@ -20,11 +20,13 @@ if(UNIX AND NOT APPLE)
 endif()
 
 set(FAULT_SOURCES
-    src/fault.cpp
-    include/fault/fault.hpp
-    include/fault/fault.h
-    include/fault/attributes.h
-    include/fault/config.h
+    "src/fault.cpp"
+    "include/fault/fault.hpp"
+    "include/fault/fault.h"
+    "include/fault/core.hpp"
+    "include/fault/format.hpp"
+    "include/fault/attributes.h"
+    "include/fault/config.h"
 )
 set(FAULT_GENERATED_HEADERS
     "${CMAKE_CURRENT_BINARY_DIR}/generated/fault/version.h"
@@ -42,11 +44,11 @@ endif()
 
 add_library(fault::fault ALIAS fault)
 
+add_subdirectory(extern) # cpptrace
+
 add_library(fault_adapter INTERFACE)
 add_library(fault::fault_adapter ALIAS fault_adapter)
 target_link_libraries(fault_adapter INTERFACE fault cpptrace::cpptrace)
-
-add_subdirectory(extern) # cpptrace
 
 target_include_directories(fault PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

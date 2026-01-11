@@ -58,6 +58,11 @@ By default, `fault` is fetched as static library (or whatever value ${BUILD_SHAR
 Initialize the global handlers at the start of your `main()` function.
 
 ```cpp
+
+#include <iostream>
+
+#include <fault/fault.hpp>
+
 void foo() {
     volatile int* p{nullptr};
     *p = 42;
@@ -192,7 +197,7 @@ A fake frame is put in the middle, labelled "====== UPSTREAM ======" for user vi
 
 1. **panic** panic may be called at any point to display terminal message, user popup, reports and dumps, before aborting the program.
 2. **FAULT_ASSERT** fault assert is an assertion macro that checks for invariants, and panics if the assertion fails, displaying location information. By default, it only compiles in debug builds, but may be overriden by using `FAULT_ASSERTIONS=ON/OFF/DEFAULT`
-3. **fault::expect**, **fault::expect_at**. Similar to assertions, it performs invariant checks, panicking if failing. However, these are present also in release builds. **fault::expect_at** always displays location information (line, function, file), whereas, by default, **fault::expect** hides them on non-debug builds. Users may override `fault::expect` location memory by using `FAULT_LOCATIONS=ON/OFF/DEFAULT`
+3. **fault::expect**, **fault::expect_at**, **FAULT_EXPECT**, **FAULT_EXPECT_AT**. Similar to assertions, it performs invariant checks, panicking if failing. However, these are present also in release builds. **fault::expect_at** always displays location information (line, function, file), whereas, by default, **fault::expect** hides them on non-debug builds. Users may override `fault::expect` location memory by using `FAULT_LOCATIONS=ON/OFF/DEFAULT`
 4. **fault::verify**. Similar to the above, but it is present in any build type, and will never show location information.
 
 Example:
@@ -209,6 +214,8 @@ int main() {
         return EXIT_FAILURE;
     }
 
+    Context context;
+
     const auto result = add(5, 2);
 
     // Assertion: compiles on debug builds by default, with source location
@@ -216,6 +223,16 @@ int main() {
 
     // Expect: Always on, location information by default on debug builds
     fault::expect(result == 7, "Math is broken");
+    
+    // Each invariant check has a callable version for lazy evaluation
+    fault::expect(result == 7, [&] {
+        return std::format(
+            "This is a large formatted string on the heap that prints a complex context struct {}. This callable "
+            "provides lazy evaluation (only formats string on failure) for those who prefer not to "
+            "use macros",
+            context.to_string())
+    });
+
     FAULT_EXPECT(result == 7,
                  "Math is broken");  // Only difference is expr 'result == 7' is also displayed
     // Or, with always source location
@@ -223,6 +240,9 @@ int main() {
 
     // Always on, never with source location
     fault::verify(result == 7, "Math is broken");
+    fault::verify(result == 7, "Math is broken. Result is {}", result); // Works for verify since it doesn't take source info
+    fault::verify(result == 7, [&] { const auto res = getSomeContext(); return res.print(); });
+    FAULT_VERIFY(result == 7);
 
     // Invariant failures on any of the above produces similar panic action
     const auto c = add(5, 10);

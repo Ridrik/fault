@@ -96,13 +96,26 @@ static inline void fault_verify(bool cond, const char* message) {
     fault_panic_at(#cond, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 #endif
 
+#ifndef FAULT_VERIFY_IMPL
+#define FAULT_VERIFY_IMPL(cond, ...) fault_verify(false, ##__VA_ARGS__)
+#endif
+
 #ifndef FAULT_EXPECT_IMPL
 #if FAULT_USE_LOCATIONS
 #define FAULT_EXPECT_IMPL(cond, ...) FAULT_EXPECT_AT_IMPL(#cond, ##__VA_ARGS__)
 #else
-#define FAULT_EXPECT_IMPL(cond, ...) fault_verify(false, ##__VA_ARGS__)
+#define FAULT_EXPECT_IMPL(cond, ...) FAULT_VERIFY_IMPL(false, ##__VA_ARGS__)
 #endif
 #endif
+
+#define FAULT_VERIFY(cond, ...)                         \
+    do {                                                \
+        if (FAULT_EXPECT_FALSE(!(cond)))                \
+            FAULT_UNLIKELY {                            \
+                FAULT_VERIFY_IMPL(cond, ##__VA_ARGS__); \
+                FAULT_UNREACHABLE();                    \
+            }                                           \
+    } while (0)
 
 #define FAULT_EXPECT_AT(cond, ...)                         \
     do {                                                   \
