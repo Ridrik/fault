@@ -11,8 +11,9 @@ When a C++ application crashes, the default behavior is often a silent exit or a
 * **Unified Crash Handling:** Intercepts SIGSEGV, SIGBUS, SIGILL, SIGFPE and SIGABRT on Linux, and main SEH Exception codes on Windows, such as EXCEPTION_STACK_OVERFLOW, EXCEPTION_ACCESS_VIOLATION, divisions by zero, illegal instructions or data misalignments.
 * **Async-Signal Safe (AS-Safe):** Prioritizes safe "Object Trace" generation on restrictive environments, or has safeguards for user requested unsafe generation. See below for more info.
 * **C++ Terminate Override:** Captures the stack trace of unhandled C++ exceptions before the runtime kills the process.
+* **User provided minimal context:** For applications you'd like to distribute to others, `fault` provides users a fatal popup if a critical error occurs, instead of risking a silent and confusing crash.
 * **Zero-Config Stack Traces:** Powered by `cpptrace` for high-quality, symbolicated traces.
-* **Panic & Assert API:** Provides `fault::panic()`, `fault::expect()`, `fault::expect_at()`, `fault::verify()` and `FAULT_ASSERT` for explicit, fail-fast error handling.
+* **Panic & Assert API:** Provides `fault::panic()`, `fault::expect()`, `fault::expect_at()`, `fault::verify()` and `FAULT_ASSERT` for explicit, fail-fast error handling, including lazy evaluated on-failure actions.
 * **Self-Contained:** Can be bundled as a single shared library with no external runtime dependencies for the consumer.
 * **User configurability:** Each fault action triggers report writing, user fatal Popups and summary message to terminal. User can switch these on/off independently for abnormal crashes, or user requested panic mode.
 
@@ -23,7 +24,7 @@ When a C++ application crashes, the default behavior is often a silent exit or a
 `fault` is designed for high-availability production environments where stability during a crash is non-negotiable.
 
 * **Async-Signal Safe (AS-Safe) Collection:** During a fatal signal (Linux) or exception (Windows), the library avoids using the heap or complex C++ runtime calls as much as possible. It prioritizes collecting signal safe "Raw Object Trace", a collection of instruction pointers with memory offsets and binary paths, using the `cpptrace` efforts as deriving mechanism.
-* **Best-effort Safeguards** If no safe trace can be collected, the user may optionally activate a best-effort approach to collect a regular trace. In this case, the library puts safeguards in place against deadlocks or recursive crashes, to ensure that the program is terminated cleanly, wether the (unsafe) trace is collected or not. **Note**: currently, on Windows, fully safe object traces can not be generated, and it is recommended for users to allow unsafe generation if a trace is desired. On Linux, safe traces can be collected only when using `libwind` with `_dl_find_object`. By default, `fault` will choose libwind this configuration parameter when fetching `cpptrace`. Users may call fault::can_collect_safe_trace() to know wether a safe trace can be collected in restrictive environments.
+* **Best-effort Safeguards** If no safe trace can be collected, the user may optionally activate a best-effort approach to collect a regular trace. In this case, the library puts safeguards in place against deadlocks or recursive crashes, to ensure that the program is terminated cleanly, wether the (unsafe) trace is collected or not. **Note**: currently, on Windows, fully safe object traces can not be generated, and it is recommended for users to allow unsafe generation if a trace is desired. On Linux, safe traces can be collected only when using `libwind` with `_dl_find_object`. By default, `fault` will choose libwind configuration parameter when fetching `cpptrace`. Users may call fault::can_collect_safe_trace() to know wether a safe trace can be collected in restrictive environments.
 * **Delayed Resolution:** Instead of resolving symbols (function names/filenames) inside the crashed process, `fault` outputs a formatted "object trace" in its log.
 * **Protected Debug Files:** Developers can resolve these traces locally using their original `.debug` or `.pdb` files. This means your production binaries can remain stripped (small and secure), while your logs remain fully actionable.
 * **Trace Resolution is optional** Traces can be optionally resolved for non-restrictive environments, if the user wishes. For safety, this is never done in Linux Posix or Windows SEH environments.
@@ -55,7 +56,7 @@ By default, `fault` is fetched as static library (or whatever value ${BUILD_SHAR
 
 ### 2. Basic usage
 
-Initialize the global handlers at the start of your `main()` function.
+Initializing `fault` is done by a simple call, taking configuration parameters such as context names, report paths, and settings in what to execute/display in case of program abnormal behaviour.
 
 ```cpp
 
@@ -261,7 +262,7 @@ On debug build will abort with:
 
 # Panic
 
-**fault::panic** (or **fault_panic**) may be called explicitly by the user to perform a controlled program abort. It takes a user message string view, as well as an optional provided object trace. For instance, users may find it an useful feature after having caught a thrown exception in which the program needs to be aborted. `fault` makes it so that, whichever fault your program suffered, you get a saved trace report to resolve later, and your application users get a fatal popup instead of a silent crash. (**Note** that popups can be turned off in case the application needs to be restarted immediately)
+**fault::panic** (or **fault_panic**) may be called explicitly by the user to perform a controlled program abort. It takes a user message string view, as well as an optional provided object trace. For instance, users may find it an useful feature after having caught a thrown exception in which the program needs to be aborted. `fault` makes it so that, whichever fault your program suffered, you get a saved trace report to resolve later, and your application users get a fatal popup instead of a silent crash. (**Note** that popups can be turned off in case the application is headless mode or when it must be restarted immediately)
 
 ```cpp
 void foo() {
