@@ -73,15 +73,18 @@ int main() {
                             const auto cppObjectTrace =
                                 cpptrace::raw_trace_from_current_exception().resolve_object_trace();
                             const auto objectTrace = fault::adapter::from_cpptrace(cppObjectTrace);
-                            fault::panic(objectTrace, "Exception caught: {}", e.what());
+                            // fault::panic(objectTrace, "Exception caught: {}", e.what());
                             // Or, without trace override
-                            fault::panic("Exception caught: {}", e.what());
+                            fault::panic("Exception caught");
                         });
 
     const auto result = add(5, 2);
 
     // Assertion: compiles on debug builds by default, with source location
     FAULT_ASSERT(result == 7, "Math is broken");
+    FAULT_ASSERT(result == 7, [] { return "math is broken"; });
+    FAULT_ASSERT(result == 7, "Math is broken. Got {} instead!", result);
+    FAULT_EXPECT_AT(result == 7, "Math is broken. Got {} instead!", result);
 
     // Expect: Always on, location information by default on debug builds
     fault::expect(result == 7, "Math is broken");

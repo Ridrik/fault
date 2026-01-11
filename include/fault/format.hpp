@@ -5,34 +5,6 @@
 
 #include <fault/core.hpp>
 
-// NOLINTBEGIN
-#define FAULT_EXPECT_AT_FMT(cond, ...)                                              \
-    do {                                                                            \
-        if (FAULT_EXPECT_FALSE(!(cond)))                                            \
-            FAULT_UNLIKELY {                                                        \
-                ::fault::expect_at_fmt_impl(#cond, std::source_location::current(), \
-                                            ##__VA_ARGS__);                         \
-                FAULT_UNREACHABLE();                                                \
-            }                                                                       \
-    } while (0)
-
-#if FAULT_USE_LOCATIONS
-#define FAULT_EXPECT_FMT_IMPL(cond, ...) FAULT_EXPECT_AT_FMT(#cond, ##__VA_ARGS__)
-#else
-#define FAULT_EXPECT_FMT_IMPL(cond, ...) ::fault::verify(false, ##__VA_ARGS__)
-#endif
-
-#define FAULT_EXPECT_FMT(cond, ...)                         \
-    do {                                                    \
-        if (FAULT_EXPECT_FALSE(!(cond)))                    \
-            FAULT_UNLIKELY {                                \
-                FAULT_EXPECT_FMT_IMPL(cond, ##__VA_ARGS__); \
-                FAULT_UNREACHABLE();                        \
-            }                                               \
-    } while (0)
-
-// NOLINTEND
-
 namespace fault {
 
 template <typename... Args>
@@ -72,12 +44,13 @@ struct PanicFormat {
 
 /**
  * @brief Implementation version with format string for macros. Users aren't expected to call it
-directly. See fault::expect_at overload or FAULT_EXPECT_AT_FMT macro.
+directly. See FAULT_ASSERT, FAULT_EXPECT_AT & fault::expect_at overload or FAULT_EXPECT_AT_FMT
+macro.
  *
  */
 template <typename... Args>
-inline void expect_at_fmt_impl(std::string_view expr, std::source_location loc,
-                               std::format_string<Args...> fmt, Args&&... args) {
+inline void panic_at(std::string_view expr, std::source_location loc,
+                     std::format_string<Args...> fmt, Args&&... args) {
     panic_at(expr, loc, std::format(fmt, std::forward<Args>(args)...));
 }
 

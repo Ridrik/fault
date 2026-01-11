@@ -2,11 +2,34 @@
 
 `fault` is a lightweight crash reporting and panic library for C and C++, implemented in C++20. It provides a unified interface for capturing object traces and alert users when things go wrong, such as segmentation faults on Linux, unhandled SEH exceptions on Windows, std::terminate, or explicit panics and assertions.
 
-## Description
+### Description
 
 When a C++ application crashes, the default behavior is often a silent exit or a cryptic "Segmentation Fault" message. `fault` changes this by intercepting system-level failures and providing developers with the context needed to debug them later, even from production contexts. It abstracts away the platform-specific complexities of POSIX signals and Windows Structured Exception Handling (SEH).
 
-### Key Features
+`fault` operates both at signal level and at c++ higher level, via its terminate handler and explicit `panic` modes. Whatever is the fault, `fault` performs common actions such as displaying a popup, terminal message, and writing a report, leaving both developers and potentially end users with some fatal context over silent and hard to debug crashes.
+
+
+## Index
+* [Key Features](#key-features)
+  * [Production & Async-Signal Safety](#1-production--async-signal-safety)
+* [Quick Start](#quick-start)
+  * [Integration](#1-integration)
+  * [Basic usage](#2-basic-usage)
+* [Features](#features)
+  * [Multi-thread fault proof](#1-multi-thread-fault-proof)
+  * [Integration with cpptrace](#2-integration-with-cpptrace)
+  * [Panic, Assertions, Expect](#3-panic-assertions-expectations)
+  * [Panic](#4-panic)
+* [C-Language Support](#fault-in-c)
+* [Utilities](#utilities)
+* [Headers](#headers)
+* [Author's Note](#authors-note)
+* [Third party components](#-third-party-components-and-licenses)
+* [License](#license)
+
+---
+
+## Key Features
 * **Native C & C++ Support:** Use the modern C++ API or the stable C-linkage interface for legacy projects.
 * **Unified Crash Handling:** Intercepts SIGSEGV, SIGBUS, SIGILL, SIGFPE and SIGABRT on Linux, and main SEH Exception codes on Windows, such as EXCEPTION_STACK_OVERFLOW, EXCEPTION_ACCESS_VIOLATION, divisions by zero, illegal instructions or data misalignments.
 * **Async-Signal Safe (AS-Safe):** Prioritizes safe "Object Trace" generation on restrictive environments, or has safeguards for user requested unsafe generation. See below for more info.
@@ -17,9 +40,10 @@ When a C++ application crashes, the default behavior is often a silent exit or a
 * **Self-Contained:** Can be bundled as a single static or shared library with no external runtime dependencies for the consumer.
 * **User configurability:** Each fault action triggers report writing, user fatal Popups and summary message to terminal. User can switch these on/off independently for abnormal crashes, or user requested panic mode.
 
----
 
-### Production & Async-Signal Safety
+### 1. Production & Async-Signal Safety
+
+---
 
 `fault` is designed for high-availability production environments where stability during a crash is non-negotiable.
 
@@ -33,7 +57,7 @@ When a C++ application crashes, the default behavior is often a silent exit or a
 
 ## Quick Start
 
-### 1. Integration (CMake FetchContent)
+### 1. Integration
 Add this to your `CMakeLists.txt` to integrate `fault` directly into your project:
 
 ```cmake
@@ -94,9 +118,13 @@ As well as a crash report, containing summaries, timing info and object traces (
 
 <img src="assets/access_violation_report_windows.png" alt="PopUp + terminal message" width="800">
 
+[↑ Back to Top](#fault)
+
 ---
 
-### 3. Multi-thread fault proof
+## Features
+
+### 1. Multi-thread fault proof
 
 `fault` is resillient to edge cases where multiple threads concurrently perform abnormal operations
 
@@ -143,9 +171,11 @@ Will produce consistent behaviour, only registering the 1st fault to enter any h
 
 <img src="assets/multi_thread_stress_linux.png" alt="Multi-thread stress proof" width="800">
 
+[↑ Back to Top](#fault)
+
 ---
 
-## 4. Integrates well with cpptrace
+### 2. Integration with cpptrace
 
 `fault` uses `cpptrace` to produce smooth cross-platform traces. This also includes the ability to recover trace from exceptions at the throw site. Note the following example:
 
@@ -184,19 +214,21 @@ int main() {
 }
 ```
 
-The user has a cpptrace::try_catch installed, and is explicitly joining the std::thread created. However, during execution, some function throws. Before reaching the `catch`, `LaunchThread` destructor runs, which sees std::thread in a joinable state and calls std::terminate. With normal object tracing, the user would have no idea (directly) that it was bar() that threw. By combining traces from exceptions in `fault` terminate handler, one can reach:
+The user has a cpptrace::try_catch installed, and is explicitly joining the std::thread created. However, during execution, some function throws. Before reaching the `catch`, `LaunchThread` destructor runs, which sees std::thread in a joinable state and calls std::terminate. Normal object tracing would report the joinable thread as the fault, but not what triggered such sequence. By combining traces from exceptions in `fault` terminate handler, one can reach:
 
 <img src="assets/crash_report_terminate_with_cpptrace_linux.png" alt="Crash report with cpptrace" width="800">
 
-A fake frame is put in the middle, labelled "====== UPSTREAM ======" for user visibility. Now, the user will know not only what triggered the terminate (the joinable thread), but where the initial fault was.
+A fake frame is put in the middle, labelled "====== UPSTREAM ======" for user visibility. The user can, therefore, have better context of their crashes when using cpptrace. 
+
+[↑ Back to Top](#fault)
 
 ---
 
-### 5. Panic, Assertions, Expectations
+### 3. Panic, Assertions, Expectations
 
 `fault` also allows users to explicitly abort the program with similar actions and reports as the signal/termination handlers. Namely, the user may:
 
-1. **panic** panic may be called at any point to display terminal message, user popup, reports and dumps, before aborting the program.
+1. `**panic**` panic may be called at any point to display terminal message, user popup, reports and dumps, before aborting the program.
 2. **FAULT_ASSERT** fault assert is an assertion macro that checks for invariants, and panics if the assertion fails, displaying location information. By default, it only compiles in debug builds, but may be overriden by using `FAULT_ASSERTIONS=ON/OFF/DEFAULT` (as strings)
 3. **fault::expect**, **fault::expect_at**, **FAULT_EXPECT**, **FAULT_EXPECT_AT**. Similar to assertions, it performs invariant checks, panicking if failing. However, these are present also in release builds. **fault::expect_at** always displays location information (line, function, file), whereas, by default, **fault::expect** hides them on non-debug builds. Users may override `fault::expect` location memory by using `FAULT_LOCATIONS=ON/OFF/DEFAULT` (as strings)
 4. **fault::verify**. Similar to the above, but it is present in any build type, and will never show location information.
@@ -234,7 +266,7 @@ int main() {
     });
 
     FAULT_EXPECT(result == 7,
-                 "Math is broken");  // Only difference is expr 'result == 7' is also displayed
+                 "Math is broken");  // expression 'result == 7' is also displayed & string is only evaluated in the cold path
     // Or, with always source location
     fault::expect_at(result == 7, "Math is broken");
 
@@ -249,6 +281,9 @@ int main() {
     const auto c = add(5, 10);
     FAULT_ASSERT(c != 15, "Bad math");
 
+    // overloads on macros available as well
+    FAULT_ASSERT(c != 15, "Bad math, got {}", c);
+
     return 0;
 }
 ```
@@ -260,9 +295,9 @@ On debug build will abort with:
 
 **Note** On Linux, if reraise signal is set, all these panic/assertions will end with reraising default SIGABRT, which usually prints the default abort message with core dumped (if system configured). On Windows, Minidump is instead explicitly generated if set on configuration, and afterwards the program is terminated. This follows the same final step as std::terminate handling.
 
-**Note** All panic and assertions have overloads with invokable functions for deferred evaluation. In addition, there are also overloads or versions available for with formatted args, as long as the user includes `fault/format.hpp` or the general `fault/fault.hpp`. It is overloaded for `fault::panic`, `fault::verify`, `fault::expect` and `fault::expect_at`. Users may also choose the macro versions `FAULT_EXPECT_FMT` and `FAULT_EXPECT_AT_FMT`.
+**Note** All panic and assertions have overloads with invokable functions for deferred evaluation. In addition, there are also overloads or versions available for with formatted args, as long as the user includes `fault/format.hpp` or the general `fault/fault.hpp`. It is overloaded for all main expressions such as `FAULT_ASSERT`, `fault::panic`, `fault::verify`, `fault::expect`, `fault::expect_at` and their Macro versions.
 
-# Panic
+### 4. Panic
 
 **`fault::panic`** (or C's **`fault_panic`**) may be called explicitly by the user to perform a controlled program abort. It takes a user message string view, as well as an optional provided object trace. For instance, users may find it an useful feature after having caught a thrown exception in which the program needs to be aborted. `fault` makes it so that, whichever fault your program suffered, you get a saved trace report to resolve later, and your application users get a fatal popup instead of a silent crash. (**Note** that popups can be turned off in case the application is headless mode or when it must be restarted immediately)
 
@@ -296,10 +331,10 @@ int main() {
 
 ```
 
+[↑ Back to Top](#fault)
 
----
 
-### 6. Utilities
+## Utilities
 
 `fault` provides the following utilities:
 
@@ -307,9 +342,9 @@ int main() {
 2. **Symbol resolver** script, which can be found in `scripts/symbol_resolver.py`. It can resolve an object trace of the crash report given original .debug files in a subdirectory tree that can be mapped via the BUILD ID that the user gave to `fault` configuration. Alternately, if the fault happened on the same machine as the script, it can take directly the object paths reported in it.
 Example: `python scripts/symbol_resolver.py --use_same_paths=1 path/to/crash_report.log`. **Note** it uses addr2line to resolve the trace. Feel free to customize it to your needs.
 
----
 
-### 7. `fault` in C
+
+## `fault` in C
 
 `fault` works for C consumers, thanks to its `fault.h` API header. The behaviour largely mimics the one in C++, with the obvious exception of having no std::terminate handling.
 
@@ -390,7 +425,10 @@ int main() {
 }
 ```
 
+[↑ Back to Top](#fault)
+
 ---
+
 ## Headers
 
 Fault uses a main, core, header, alongside optional ones that extend functionality (as well as dependencies). A short summary of the public headers is seen below:
@@ -411,7 +449,9 @@ The goal of this library is to provide safeguards that work reliably against all
 
 Another goal of `fault` is to be non-intrusive in saving a trace. It does not try to resolve symbols by default, making it useful for production scenarios where, in case of a fault, the user/client can simply send the reports for you to resolve locally given your debug files.
 
-Lastly, `fault` provides a modern framework for `panic` based commands and assertions, which is backed up by `fault`'s overall handling. Users may find interesting as replacement for macros whenever applicable, as well as having invocable and format-based options, wether function-based or macro-based.
+Lastly, `fault` provides a modern framework for `panic` based commands and assertions, which is backed up by `fault`'s overall termination handling. Users may find interesting as replacement for macros whenever applicable, as well as having invocable and format-based options, wether function-based or macro-based. Macros are also readily available for each version, and can even be combined
+
+[↑ Back to Top](#fault)
 
 ---
 
@@ -430,5 +470,7 @@ Lastly, `fault` provides a modern framework for `panic` based commands and asser
 **`fault` depends on [cpptrace](https://github.com/jeremy-rifkin/cpptrace). 
 * **Standard Build:** MIT.
 * **With libdwarf:** If `cpptrace` is configured to use `libdwarf` and is linked **statically**, the resulting binary is subject to the **LGPL** license. Linking this condition statically to `fault` will therefore make the resulting binary LGPL.
+
+[↑ Back to Top](#fault)
 
 ---
