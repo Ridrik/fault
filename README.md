@@ -390,6 +390,19 @@ int main() {
 ```
 
 ---
+## Headers
+
+Fault uses a main, core, header, alongside optional ones that extend functionality (as well as dependencies). A short summary of the public headers is seen below:
+
+| Header | Purpose | Notes |
+| ---------- | -------- | -------- |
+| fault/core.hpp | core functionality, including initialization, panic & assertion, utilities | Suitable for most c++ consumers when not using format-based arguments or cpptrace adapter |
+| fault/format.hpp | overloads or versions for panic and assertion functions & macros | Needed for std::format based strings |
+| fault/fault.hpp | Everything accessible from `fault` C++ headers, minus the adapter | Recommended to use if you don't mind the `<format>` header |
+| fault/adapter/stacktrace.hpp | Simple header-only conversion between `cpptrace` and `fault` | Ensures that consumers do not need to depend directly on `cpptrace` unless override traces are desired |
+| fault/fault.h | Header for C consumers | If this library is pre-compiled, and you are using an older C++ version than C++20, then you may also use this |
+
+---
 
 ## Author's Note
 
