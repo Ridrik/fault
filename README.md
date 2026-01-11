@@ -197,8 +197,8 @@ A fake frame is put in the middle, labelled "====== UPSTREAM ======" for user vi
 `fault` also allows users to explicitly abort the program with similar actions and reports as the signal/termination handlers. Namely, the user may:
 
 1. **panic** panic may be called at any point to display terminal message, user popup, reports and dumps, before aborting the program.
-2. **FAULT_ASSERT** fault assert is an assertion macro that checks for invariants, and panics if the assertion fails, displaying location information. By default, it only compiles in debug builds, but may be overriden by using `FAULT_ASSERTIONS=ON/OFF/DEFAULT`
-3. **fault::expect**, **fault::expect_at**, **FAULT_EXPECT**, **FAULT_EXPECT_AT**. Similar to assertions, it performs invariant checks, panicking if failing. However, these are present also in release builds. **fault::expect_at** always displays location information (line, function, file), whereas, by default, **fault::expect** hides them on non-debug builds. Users may override `fault::expect` location memory by using `FAULT_LOCATIONS=ON/OFF/DEFAULT`
+2. **FAULT_ASSERT** fault assert is an assertion macro that checks for invariants, and panics if the assertion fails, displaying location information. By default, it only compiles in debug builds, but may be overriden by using `FAULT_ASSERTIONS=ON/OFF/DEFAULT` (as strings)
+3. **fault::expect**, **fault::expect_at**, **FAULT_EXPECT**, **FAULT_EXPECT_AT**. Similar to assertions, it performs invariant checks, panicking if failing. However, these are present also in release builds. **fault::expect_at** always displays location information (line, function, file), whereas, by default, **fault::expect** hides them on non-debug builds. Users may override `fault::expect` location memory by using `FAULT_LOCATIONS=ON/OFF/DEFAULT` (as strings)
 4. **fault::verify**. Similar to the above, but it is present in any build type, and will never show location information.
 
 Example:
