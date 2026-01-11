@@ -393,7 +393,7 @@ int main() {
 
 ## Author's Note
 
-The goal of this library is to provide safeguards that work reliably against all common software faults, without the need of complex tools or dependencies. `fault` achieves a smooth, thread-safe, default-async-signal-safe operations and, when needed (or by redundancy), safeguards against unsafe trace generation. Apart from this, `fault` also warns the user with basic fatal popups instead of silent crashes, which you may find useful wether when debugging of for production.
+The goal of this library is to provide safeguards that work reliably against all common software faults, without the need of complex tools or dependencies. `fault` achieves a smooth, thread-safe, default-async-signal-safe operations and, when needed (or by redundancy), safeguards against unsafe trace generation. Apart from this, `fault` also warns the user with basic fatal popups instead of silent crashes, which you may find useful wether when debugging or for end users.
 
 Another goal of `fault` is to be non-intrusive in saving a trace. It does not try to resolve symbols by default, making it useful for production scenarios where, in case of a fault, the user/client can simply send the reports for you to resolve locally given your debug files.
 
