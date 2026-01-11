@@ -6,6 +6,7 @@
 #include <fault/attributes.h>
 #include <fault/config.h>
 #include <fault/fault_export.h>
+#include <fault/macros.h>
 
 #ifdef __cplusplus
 #define FAULT_NOEXCEPT noexcept
@@ -107,7 +108,6 @@ static inline void fault_verify_c(bool cond, fault_msg_callback_t callback, void
 }
 
 // NOLINTBEGIN
-
 #ifndef FAULT_EXPECT_AT_IMPL
 #define FAULT_EXPECT_AT_IMPL(cond, ...) \
     fault_panic_at(#cond, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
@@ -136,15 +136,6 @@ static inline void fault_verify_c(bool cond, fault_msg_callback_t callback, void
 #define FAULT_EXPECT_C_IMPL(cond, ...) FAULT_VERIFY_C_IMPL(false, ##__VA_ARGS__)
 #endif
 
-#define FAULT_VERIFY(cond, ...)                         \
-    do {                                                \
-        if (FAULT_EXPECT_FALSE(!(cond)))                \
-            FAULT_UNLIKELY {                            \
-                FAULT_VERIFY_IMPL(cond, ##__VA_ARGS__); \
-                FAULT_UNREACHABLE();                    \
-            }                                           \
-    } while (0)
-
 #define FAULT_VERIFY_C(cond, ...)                         \
     do {                                                  \
         if (FAULT_EXPECT_FALSE(!(cond)))                  \
@@ -154,15 +145,6 @@ static inline void fault_verify_c(bool cond, fault_msg_callback_t callback, void
             }                                             \
     } while (0)
 
-#define FAULT_EXPECT_AT(cond, ...)                         \
-    do {                                                   \
-        if (FAULT_EXPECT_FALSE(!(cond)))                   \
-            FAULT_UNLIKELY {                               \
-                FAULT_EXPECT_AT_IMPL(cond, ##__VA_ARGS__); \
-                FAULT_UNREACHABLE();                       \
-            }                                              \
-    } while (0)
-
 #define FAULT_EXPECT_AT_C(cond, ...)                         \
     do {                                                     \
         if (FAULT_EXPECT_FALSE(!(cond)))                     \
@@ -170,15 +152,6 @@ static inline void fault_verify_c(bool cond, fault_msg_callback_t callback, void
                 FAULT_EXPECT_AT_C_IMPL(cond, ##__VA_ARGS__); \
                 FAULT_UNREACHABLE();                         \
             }                                                \
-    } while (0)
-
-#define FAULT_EXPECT(cond, ...)                         \
-    do {                                                \
-        if (FAULT_EXPECT_FALSE(!(cond)))                \
-            FAULT_UNLIKELY {                            \
-                FAULT_EXPECT_IMPL(cond, ##__VA_ARGS__); \
-                FAULT_UNREACHABLE();                    \
-            }                                           \
     } while (0)
 
 #define FAULT_EXPECT_C(cond, ...)                         \
@@ -191,13 +164,12 @@ static inline void fault_verify_c(bool cond, fault_msg_callback_t callback, void
     } while (0)
 
 #if FAULT_ASSERT_ACTIVE
-#define FAULT_ASSERT(cond, ...) FAULT_EXPECT_AT(cond, ##__VA_ARGS__)
 #define FAULT_ASSERT_C(cond, ...) FAULT_EXPECT_AT_C(cond, ##__VA_ARGS__)
 #else
-#define FAULT_ASSERT(cond, ...) ((void)0)
 #define FAULT_ASSERT_C(cond, ...) ((void)0)
 #endif
 // NOLINTEND
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

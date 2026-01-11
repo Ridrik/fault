@@ -240,7 +240,8 @@ int main() {
 
     // Always on, never with source location
     fault::verify(result == 7, "Math is broken");
-    fault::verify(result == 7, "Math is broken. Result is {}", result); // verify, verify_at and its macros (including FAULT_ASSERT) have overloads or versions for format strings
+    // verify, expect, expect_at and its macros (including FAULT_ASSERT) have overloads or versions for format strings
+    fault::verify(result == 7, "Math is broken. Result is {}", result);
     fault::verify(result == 7, [&] { const auto res = getSomeContext(); return res.print(); });
     FAULT_VERIFY(result == 7);
 
@@ -259,11 +260,11 @@ On debug build will abort with:
 
 **Note** On Linux, if reraise signal is set, all these panic/assertions will end with reraising default SIGABRT, which usually prints the default abort message with core dumped (if system configured). On Windows, Minidump is instead explicitly generated if set on configuration, and afterwards the program is terminated. This follows the same final step as std::terminate handling.
 
-**Note** All panic and assertions have overloads with invokable functions for deferred evaluation. In addition, there are also overloads or versions available for with formatted args, as long as the user includes `fault/format.hpp` or the general `fault/fault.hpp`. It is overloaded for `fault::verify`, `fault::expect` and `fault::expect_at`. Users may also choose the macro versions `FAULT_EXPECT_FMT` and `FAULT_EXPECT_AT_FMT`. For **fault::panic**, `fault::panic_fmt` is available to format strings.
+**Note** All panic and assertions have overloads with invokable functions for deferred evaluation. In addition, there are also overloads or versions available for with formatted args, as long as the user includes `fault/format.hpp` or the general `fault/fault.hpp`. It is overloaded for `fault::verify`, `fault::expect` and `fault::expect_at`. Users may also choose the macro versions `FAULT_EXPECT_FMT` and `FAULT_EXPECT_AT_FMT`. For **`fault::panic`**, `fault::panic_fmt` is available to format strings.
 
 # Panic
 
-**fault::panic** (or **fault_panic**) may be called explicitly by the user to perform a controlled program abort. It takes a user message string view, as well as an optional provided object trace. For instance, users may find it an useful feature after having caught a thrown exception in which the program needs to be aborted. `fault` makes it so that, whichever fault your program suffered, you get a saved trace report to resolve later, and your application users get a fatal popup instead of a silent crash. (**Note** that popups can be turned off in case the application is headless mode or when it must be restarted immediately)
+**`fault::panic`** (or C's **`fault_panic`**) may be called explicitly by the user to perform a controlled program abort. It takes a user message string view, as well as an optional provided object trace. For instance, users may find it an useful feature after having caught a thrown exception in which the program needs to be aborted. `fault` makes it so that, whichever fault your program suffered, you get a saved trace report to resolve later, and your application users get a fatal popup instead of a silent crash. (**Note** that popups can be turned off in case the application is headless mode or when it must be restarted immediately)
 
 ```cpp
 void foo() {
@@ -287,7 +288,8 @@ int main() {
                                 cpptrace::raw_trace_from_current_exception().resolve_object_trace();
 
                             fault::panic(e.what(), fault::adapter::from_cpptrace(objectTrace));
-                            // If no override trace is desired, version with format args also exists: fault::panic_fmt("Caught following exception: {}", e.what());
+                            // If no override trace is desired, version with format args also exists:
+                            // fault::panic_fmt("Caught following exception: {}", e.what());
                         });
 }
 
@@ -389,6 +391,16 @@ int main() {
 
 ---
 
+## Author's Note
+
+The goal of this library is to provide safeguards that work reliably against all common software faults, without the need of complex tools or dependencies. `fault` achieves a smooth, thread-safe, default-async-signal-safe operations and, when needed (or by redundancy), safeguards against unsafe trace generation. Apart from this, `fault` also warns the user with basic fatal popups instead of silent crashes, which you may find useful wether when debugging of for production.
+
+Another goal of `fault` is to be non-intrusive in saving a trace. It does not try to resolve symbols by default, making it useful for production scenarios where, in case of a fault, the user/client can simply send the reports for you to resolve locally given your debug files.
+
+Lastly, `fault` provides a modern framework for `panic` based commands and assertions, which is backed up by `fault`'s overall handling. Users may find interesting as replacement for macros whenever applicable, as well as having invocable and format-based options, wether function-based or macro-based.
+
+---
+
 ## 🧩 Third-Party Components and Licenses
 `fault` uses `cpptrace` as driving mechanism to collect object traces smoothly across both platforms, and, whenever applicable, signal safe traces. 
 
@@ -401,7 +413,6 @@ int main() {
 ## License
 `fault` is licensed under the **MIT License** (see `LICENSE` file).
 
-### Third-Party Dependency Licensing
 **`fault` depends on [cpptrace](https://github.com/jeremy-rifkin/cpptrace). 
 * **Standard Build:** MIT.
 * **With libdwarf:** If `cpptrace` is configured to use `libdwarf` and is linked **statically**, the resulting binary is subject to the **LGPL** license. Linking this condition statically to `fault` will therefore make the resulting binary LGPL.

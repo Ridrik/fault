@@ -76,8 +76,8 @@
 #include <vector>
 
 #include <fault/attributes.h>
-#include <fault/fault.h>
 #include <fault/fault_export.h>
+#include <fault/macros.h>
 
 namespace fault {
 
