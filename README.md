@@ -353,7 +353,7 @@ With crash report:
 
 Other macros/functions available: **FAULT_ASSERT** (default for debug, always with source location), **FAULT_EXPECT**, **FAULT_EXPECT_AT** (always on, by default `EXPECT` has source location on debug builds only), **FAULT_VERIFY**. All these macros have a macro version with suffix "_C", standing for callbacks. Examples:
 
-**Note** For C++ users that want callback options, note that while you can use these versions reliably, it is recommended to use the embedded overloads in `fault::<function_name>` with a std::invokable.
+**Note** For C++ users that want callback options: while you can use these versions reliably, it is recommended to use the embedded overloads in `fault::<function_name>` (which invokes any callable).
 
 ```c
 const char* on_panic(void* data) {
