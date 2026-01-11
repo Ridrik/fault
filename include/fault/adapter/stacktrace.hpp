@@ -4,7 +4,7 @@
 #if __has_include(<cpptrace/basic.hpp>)
 
 #include <cpptrace/basic.hpp>
-#include <fault/fault.hpp>
+#include <fault/core.hpp>
 
 namespace fault::adapter {
 

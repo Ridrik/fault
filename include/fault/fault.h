@@ -89,6 +89,16 @@ static inline void fault_verify(bool cond, const char* message) {
         }
 }
 
+typedef const char* (*fault_msg_callback_t)(void* user_data);
+
+static inline void fault_verify_c(bool cond, fault_msg_callback_t callback, void* user_data) {
+    if (FAULT_EXPECT_FALSE(!(cond)))
+        FAULT_UNLIKELY {
+            fault_panic(callback(user_data));
+            FAULT_UNREACHABLE();
+        }
+}
+
 // NOLINTBEGIN
 
 #ifndef FAULT_EXPECT_AT_IMPL

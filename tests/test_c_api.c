@@ -8,6 +8,14 @@ void infinite_recursion() {
     buffer[0] = 0;
 }
 
+const char* on_panic(void* data) {
+    int* val = (int*)data;
+    if (*val == 404) {
+        return "Resource not found";
+    }
+    return "Unknown system failure";
+}
+
 int main() {
     FaultConfig config = fault_get_default_config();
     config.appName = "MyApp";
@@ -20,6 +28,9 @@ int main() {
         printf("Failed to init fault\n");
         return 1;
     }
+
+    int status = 404;
+    fault_verify_c(status == 200, on_panic, &status);
 
     infinite_recursion();  // Triggers seg fault on linux & stack overflow on windows
 

@@ -3,7 +3,7 @@
 
 #include <format>
 
-#include "fault/core.hpp"
+#include <fault/core.hpp>
 
 // NOLINTBEGIN
 #define FAULT_EXPECT_AT_FMT(cond, ...)                                              \
@@ -34,6 +34,12 @@
 // NOLINTEND
 
 namespace fault {
+
+template <typename... Args>
+FAULT_NORETURN inline void panic_fmt(std::format_string<Args...> fmt, Args&&... args) {
+    panic(std::format(fmt, std::forward<Args>(args)...), std::nullopt);
+    FAULT_UNREACHABLE();
+}
 
 /**
  * @brief Verify invariant version with format args

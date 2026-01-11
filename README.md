@@ -259,6 +259,8 @@ On debug build will abort with:
 
 **Note** On Linux, if reraise signal is set, all these panic/assertions will end with reraising default SIGABRT, which usually prints the default abort message with core dumped (if system configured). On Windows, Minidump is instead explicitly generated if set on configuration, and afterwards the program is terminated. This follows the same final step as std::terminate handling.
 
+**Note** All panic and assertions have overloads with invokable functions for deferred evaluation. In addition, there are also versions available for each with formatted args, as long as the user includes `fault/format.hpp` or the general `fault/fault.hpp`. It is overloaded for `fault::verify`, whereas, for `fault::expect` and `fault::expect_at`, the equivalent `FAULT_EXPECT_FMT` and `FAULT_EXPECT_AT_FMT` macros are available (I've not been able to make them regular functions yet without annoying the user in having to explictly calling std::source_location::current(), since format args require to be positioned at the end of a function).
+
 # Panic
 
 **fault::panic** (or **fault_panic**) may be called explicitly by the user to perform a controlled program abort. It takes a user message string view, as well as an optional provided object trace. For instance, users may find it an useful feature after having caught a thrown exception in which the program needs to be aborted. `fault` makes it so that, whichever fault your program suffered, you get a saved trace report to resolve later, and your application users get a fatal popup instead of a silent crash. (**Note** that popups can be turned off in case the application is headless mode or when it must be restarted immediately)
@@ -285,6 +287,7 @@ int main() {
                                 cpptrace::raw_trace_from_current_exception().resolve_object_trace();
 
                             fault::panic(e.what(), fault::adapter::from_cpptrace(objectTrace));
+                            // If no override trace is desired, version with format args also exists: fault::panic_fmt("Caught following exception: {}", e.what());
                         });
 }
 
@@ -329,6 +332,10 @@ int main() {
 
     infinite_recursion();  // Triggers seg fault on linux & stack overflow on windows
 
+    // Example with callable for deferred evaluation (no source location, always on)
+    int status = 404;
+    fault_verify_c(status == 200, on_panic, &status);
+
     printf("C API test passed\n");
     return 0;
 }
@@ -343,6 +350,8 @@ With crash report:
 <img src="assets/overflow_report_linux_c.png" alt="Overflow report in C (Linux)" width="800">
 
 (...continues)
+
+Users can also find most 
 
 ---
 

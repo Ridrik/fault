@@ -204,7 +204,7 @@ FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
     std::string_view message, const std::optional<ObjectTrace>& exceptionTrace = std::nullopt);
 
 /**
- * @brief Panic version using metadata information, for assertion failures
+ * @brief Panic version using metadata information, for invariant failures with source location.
  *
  * @param expr expression string
  * @param loc source location (file, line, function name)
@@ -213,6 +213,30 @@ FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
 [[noreturn]] FAULT_EXPORT void panic_at(std::string_view expr,
                                         std::source_location loc = std::source_location::current(),
                                         std::string_view userMsg = {});
+
+/**
+ * @brief Panic version using metadata information, for invariant failures with source location.
+ * Replaces string_view with a string_view callable, for deferred evaluation.
+ *
+ * @param expr expression string
+ * @param loc source location (file, line, function name)
+ * @param msgFn user message to be displayed & logged, as callable
+ */
+template <typename MsgFn>
+    requires std::invocable<MsgFn> &&
+             std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
+[[noreturn]] FAULT_EXPORT void panic_at(
+    std::string_view expr, std::source_location loc = std::source_location::current(),
+    MsgFn&& msgFn = [] { return ""; }) {
+    if constexpr (requires { bool(msgFn); }) {
+        if (!msgFn) {
+            panic_at(expr, loc, "<null message provider>");
+            FAULT_UNREACHABLE();
+        }
+    }
+    panic_at(expr, loc, std::invoke(std::forward<MsgFn>(msgFn)));
+    FAULT_UNREACHABLE();
+}
 
 /**
  * @brief Verify invariant. In case of failure, performs panic shutdown, writing object traced
@@ -230,7 +254,7 @@ inline void verify(bool cond, std::string_view userMsg = {}) {
 }
 
 /**
- * @brief Verify invariant version with string_view callable, for lazy evaluation.
+ * @brief Verify invariant version with string_view callable, for deferred evaluation.
  *
  * @tparam MsgFn callable
  * @param cond condition to verify
@@ -241,6 +265,12 @@ template <typename MsgFn>
              std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
 inline void verify(bool cond, MsgFn&& msgFn) {
     if (!cond) [[unlikely]] {
+        if constexpr (requires { bool(msgFn); }) {
+            if (!msgFn) {
+                panic("<null message provider>");
+                FAULT_UNREACHABLE();
+            }
+        }
         panic(std::invoke(std::forward<MsgFn>(msgFn)));
         FAULT_UNREACHABLE();
     }
@@ -262,7 +292,7 @@ inline void expect_at(bool cond, std::string_view userMsg = {},
 }
 
 /**
- * @brief expect_at version with string_view callable, for lazy evaluation
+ * @brief expect_at version with string_view callable, for deferred evaluation
  *
  * @tparam MsgFn
  * @param cond condition to verify
@@ -275,6 +305,12 @@ template <typename MsgFn>
 inline void expect_at(bool cond, MsgFn&& msgFn,
                       std::source_location loc = std::source_location::current()) {
     if (!cond) [[unlikely]] {
+        if constexpr (requires { bool(msgFn); }) {
+            if (!msgFn) {
+                panic_at("", loc, "<null message provider>");
+                FAULT_UNREACHABLE();
+            }
+        }
         panic_at("", loc, std::invoke(std::forward<MsgFn>(msgFn)));
         FAULT_UNREACHABLE();
     }
@@ -304,7 +340,7 @@ inline void expect(bool cond, std::string_view userMsg = {}
 }
 
 /**
- * @brief expect version with string_view callable, for lazy evaluation
+ * @brief expect version with string_view callable, for deferred evaluation
  *
  * @param cond condition to verify
  * @param msgFn user message to be displayed & logged, as callable
@@ -321,9 +357,9 @@ inline void expect(bool cond, MsgFn&& msgFn
 ) {
     if (!cond) [[unlikely]] {
 #if FAULT_USE_LOCATIONS
-        expect_at(false, std::invoke(std::forward<MsgFn>(msgFn)), loc);
+        expect_at(false, std::forward<MsgFn>(msgFn), loc);
 #else
-        verify(false, std::invoke(std::forward<MsgFn>(msgFn)));
+        verify(false, std::forward<MsgFn>(msgFn));
 #endif
     }
 }
