@@ -1734,23 +1734,24 @@ void panic_at(std::string_view expr, std::string_view file, std::uint32_t line,
               std::string_view func, std::string_view userMsg) {
     std::array<char, 2048> msg{};
     std::size_t offset{0};
-    utils::safeAppend(msg.data(), offset, msg.size(), "Assertion ");
+    utils::safeAppend(msg.data(), offset, msg.size(), "Assertion failed");
     if (!expr.empty()) {
+        utils::safeAppend(msg.data(), offset, msg.size(), ": ");
         utils::safeAppend(msg.data(), offset, msg.size(), expr.data(), expr.size());
-        utils::safeAppend(msg.data(), offset, msg.size(), " Failed");
-    } else {
-        utils::safeAppend(msg.data(), offset, msg.size(), "Failed");
     }
     if (!userMsg.empty()) {
-        utils::safeAppend(msg.data(), offset, msg.size(), " | Message: ");
+        utils::safeAppend(msg.data(), offset, msg.size(), " | ");
         utils::safeAppend(msg.data(), offset, msg.size(), userMsg.data(), userMsg.size());
     }
-    utils::safeAppend(msg.data(), offset, msg.size(), " at ");
+    utils::safeAppend(msg.data(), offset, msg.size(), " @ ");
     utils::safeAppend(msg.data(), offset, msg.size(), file.data(), file.size());
     utils::safeAppend(msg.data(), offset, msg.size(), ":");
     utils::itoaSafeAppend(msg.data(), offset, msg.size(), line);
-    utils::safeAppend(msg.data(), offset, msg.size(), " in ");
-    utils::safeAppend(msg.data(), offset, msg.size(), func.data(), func.size());
+    if (!func.empty()) {
+        utils::safeAppend(msg.data(), offset, msg.size(), " (");
+        utils::safeAppend(msg.data(), offset, msg.size(), func.data(), func.size());
+        utils::safeAppend(msg.data(), offset, msg.size(), ")");
+    }
 
     constexpr const ObjectTrace* kNoExceptionTrace{nullptr};
     panic_impl(std::string_view{msg.data(), offset}, kNoExceptionTrace);
