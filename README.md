@@ -6,7 +6,7 @@
 
 When a C++ application crashes, the default behavior is often a silent exit or a cryptic "Segmentation Fault" message. `fault` changes this by intercepting system-level failures and providing developers with the context needed to debug them later, even from production contexts. It abstracts away the platform-specific complexities of POSIX signals and Windows Structured Exception Handling (SEH).
 
-`fault` operates both at signal level and at c++ higher level, via its terminate handler and explicit `panic` modes. Whatever is the fault, `fault` performs common actions such as displaying a popup, terminal message, and writing a report, leaving both developers and potentially end users with some fatal context over silent and hard to debug crashes.
+`fault` operates both at signal level and at c++ higher level, via its terminate handler and explicit `panic` modes. Whatever is the fault, `fault` performs common actions such as displaying a popup, terminal message, and writing a report, leaving both developers and potentially end users with some fatal context over silent and confusing crashes.
 
 
 ## Index
@@ -17,9 +17,9 @@ When a C++ application crashes, the default behavior is often a silent exit or a
   * [Basic usage](#2-basic-usage)
 * [Features](#features)
   * [Multi-thread fault proof](#1-multi-thread-fault-proof)
-  * [Integration with cpptrace](#2-integration-with-cpptrace)
-  * [Panic, Assertions, Expect](#3-panic-assertions-expectations)
-  * [Panic](#4-panic)
+  * [Panic, Assertions, Expect](#2-panic-assertions-expectations)
+  * [Panic](#3-panic)
+  * [Integration with cpptrace](#4-integration-with-cpptrace)
 * [C-Language Support](#fault-in-c)
 * [Utilities](#utilities)
 * [Headers](#headers)
@@ -36,7 +36,7 @@ When a C++ application crashes, the default behavior is often a silent exit or a
 * **C++ Terminate Override:** Captures the stack trace of unhandled C++ exceptions before the runtime kills the process.
 * **User provided minimal context:** For applications you'd like to distribute to others, `fault` provides users a fatal popup if a critical error occurs, instead of risking a silent and confusing crash.
 * **Zero-Config Stack Traces:** Powered by `cpptrace` for high-quality, symbolicated traces.
-* **Panic & Assert API:** Provides `fault::panic()`, `fault::expect()`, `fault::expect_at()`, `fault::verify()` and `FAULT_ASSERT` for explicit, fail-fast error handling, including lazy evaluated on-failure actions.
+* **Panic & Assert API:** Provides `fault::panic()`, `fault::expect()`, `fault::expect_at()`, `fault::verify()` and `FAULT_ASSERT` for explicit, fail-fast error handling, including deferred evaluated on-failure actions.
 * **Self-Contained:** Can be bundled as a single static or shared library with no external runtime dependencies for the consumer.
 * **User configurability:** Each fault action triggers report writing, user fatal Popups and summary message to terminal. User can switch these on/off independently for abnormal crashes, or user requested panic mode.
 
@@ -175,56 +175,7 @@ Will produce consistent behaviour, only registering the 1st fault to enter any h
 
 ---
 
-### 2. Integration with cpptrace
-
-`fault` uses `cpptrace` to produce smooth cross-platform traces. This also includes the ability to recover trace from exceptions at the throw site. Note the following example:
-
-```cpp
-void terminateTest() {
-    cpptrace::try_catch(
-        [] {
-            struct LaunchThread {
-                LaunchThread() : t{[] { std::this_thread::sleep_for(std::chrono::seconds(1)); }} {}
-
-                std::thread t;  // calls std::terminate if in a joinable state
-            } a;
-
-            bar();  // throws
-
-            a.t.join();
-        },
-        [](const std::exception& e) {
-            // Deal with it, recover or exit
-        });
-}
-
-int main() {
-    // Initialize global crash handlers (Signals, SEH, and Terminate)
-    if (!fault::init({.appName = "MyApp",
-                      .buildID = "MyBuildID",
-                      .crashDir = "crash",
-                      .resolveNonSignalTrace = true})) {
-        std::cerr << "Failed to initialize fault.\n";
-        return EXIT_FAILURE;
-    }
-
-    terminateTest();
-
-    return 0;
-}
-```
-
-The user has a cpptrace::try_catch installed, and is explicitly joining the std::thread created. However, during execution, some function throws. Before reaching the `catch`, `LaunchThread` destructor runs, which sees std::thread in a joinable state and calls std::terminate. Normal object tracing would report the joinable thread as the fault, but not what triggered such sequence. By combining traces from exceptions in `fault` terminate handler, one can reach:
-
-<img src="assets/crash_report_terminate_with_cpptrace_linux.png" alt="Crash report with cpptrace" width="800">
-
-A fake frame is put in the middle, labelled "====== UPSTREAM ======" for user visibility. The user can, therefore, have better context of their crashes when using cpptrace. 
-
-[↑ Back to Top](#fault)
-
----
-
-### 3. Panic, Assertions, Expectations
+### 2. Panic, Assertions, Expectations
 
 `fault` also allows users to explicitly abort the program with similar actions and reports as the signal/termination handlers. Namely, the user may:
 
@@ -302,9 +253,9 @@ On debug build will abort with:
 
 **Note** All panic and assertions have overloads with invokable functions for deferred evaluation. In addition, there are also overloads or versions available for with formatted args, as long as the user includes `fault/format.hpp` or the general `fault/fault.hpp`. It is overloaded for all main expressions such as `FAULT_ASSERT`, `fault::panic`, `fault::verify`, `fault::expect`, `fault::expect_at` and their Macro versions.
 
-### 4. Panic
+### 3. Panic
 
-**`fault::panic`** (or C's **`fault_panic`**) may be called explicitly by the user to perform a controlled program abort. It takes a user message string view, as well as an optional provided object trace. For instance, users may find it an useful feature after having caught a thrown exception in which the program needs to be aborted. `fault` makes it so that, whichever fault your program suffered, you get a saved trace report to resolve later, and your application users get a fatal popup instead of a silent crash. (**Note** that popups can be turned off in case the application is headless mode or when it must be restarted immediately)
+**`fault::panic`** (or C's **`fault_panic`**) may be called explicitly by the user to perform a controlled program abort. It takes a user message string view (some overrides available). For instance, users may find it an useful feature after having caught a thrown exception in which the program needs to be aborted. `fault` makes it so that, whichever fault your program suffered, you get a saved trace report to resolve later, and your application users get a fatal popup instead of a silent crash. (**Note** that popups can be turned off in case the application is headless mode or when it must be restarted immediately)
 
 ```cpp
 void foo() {
@@ -327,6 +278,78 @@ int main() {
     } catch (const std::exception& e) {
         fault::panic("Exception caught: {}", e.what());
     }
+}
+
+```
+
+[↑ Back to Top](#fault)
+
+---
+
+### 4. Integration with cpptrace
+
+`fault` uses `cpptrace` internally to produce smooth cross-platform traces. This dependency is hidden by default to consumers, but if one wishes to use it, there are some additions that can be used with `fault`. This includes, for instance, automatic traces from exceptions on terminate handling, or override traces for panic. See the example below:
+
+```cpp
+void terminateTest() {
+    cpptrace::try_catch(
+        [] {
+            struct LaunchThread {
+                LaunchThread() : t{[] { std::this_thread::sleep_for(std::chrono::seconds(1)); }} {}
+
+                std::thread t;  // calls std::terminate if in a joinable state
+            } a;
+
+            bar();  // throws
+
+            a.t.join();
+        },
+        [](const std::exception& e) {
+            // Deal with it, recover or exit
+        });
+}
+
+int main() {
+    // Initialize global crash handlers (Signals, SEH, and Terminate)
+    if (!fault::init({.appName = "MyApp",
+                      .buildID = "MyBuildID",
+                      .crashDir = "crash",
+                      .resolveNonSignalTrace = true})) {
+        std::cerr << "Failed to initialize fault.\n";
+        return EXIT_FAILURE;
+    }
+
+    terminateTest();
+
+    return 0;
+}
+```
+
+The user has a cpptrace::try_catch installed, and is explicitly joining the std::thread created. However, during execution, some function throws. Before reaching the `catch`, `LaunchThread` destructor runs, which sees std::thread in a joinable state and calls std::terminate. Normal object tracing would report the joinable thread as the fault, but not what triggered such sequence. By combining traces from exceptions in `fault` terminate handler, it'll also include the initial fault (in bar): (Note: A fake frame is put in the middle, labelled "====== UPSTREAM ======" for user visibility)
+
+<img src="assets/crash_report_terminate_with_cpptrace_linux.png" alt="Crash report with cpptrace" width="800">
+
+Another useful example, where one can panic with an explicit trace from exception:
+
+```cpp
+
+#include <fault/fault.hpp>
+#include <fault/adapter/stacktrace.hpp>
+
+void foo() {
+    throw std::runtime_error("Shouldn't have happened");
+}
+
+int main() {
+    // Initialize global crash handlers (Signals, SEH, and Terminate)
+    if (!fault::init({.appName = "MyApp",
+                      .buildID = "MyBuildID",
+                      .crashDir = "crash",
+                      .useUnsafeStacktraceOnSignalFallback = true,
+                      .generateMiniDumpWindows = true})) {
+        std::cerr << "Failed to initialize fault.\n";
+        return EXIT_FAILURE;
+    }
 
     // Override traces
     cpptrace::try_catch([] { foo(); },
@@ -341,8 +364,8 @@ int main() {
 
 ```
 
-[↑ Back to Top](#fault)
 
+[↑ Back to Top](#fault)
 
 ## Utilities
 
