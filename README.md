@@ -17,7 +17,7 @@ When a C++ application crashes, the default behavior is often a silent exit or a
   * [Basic usage](#2-basic-usage)
 * [Features](#features)
   * [Multi-thread fault proof](#1-multi-thread-fault-proof)
-  * [Panic, Assertions, Expect](#2-panic-assertions-expectations)
+  * [Panic, Assertions, Expect](#2-panic-based-assertions)
   * [Panic](#3-panic)
   * [Integration with cpptrace](#4-integration-with-cpptrace)
 * [C-Language Support](#fault-in-c)
@@ -74,7 +74,9 @@ target_link_libraries(my_app PRIVATE fault::fault)
 ```
 
 By default, `fault` is fetched either as dynamic or static library, depending on ${BUILD_SHARED_LIBS}. Users may override it using FAULT_BUILD_SHARED=On/Off (boolean).
-(Note: When building from source, cpptrace is fetched as part of it if FAULT_BUNDLE_CPPTRACE=On is selected (default), unless the target already exists. The same configurational options for cpptrace apply)
+(Note: When building from source, cpptrace is fetched as part of it if FAULT_BUNDLE_CPPTRACE=On is selected (default), unless the target already exists. The same configurational options for cpptrace apply).
+
+**Note** on State: If you link `fault` statically into multiple shared objects (DLLs/SOs) within the same process, each module will maintain its own independent configuration state. To share state across boundaries, build ``fault` as a shared library.
 
 ---
 
@@ -175,7 +177,7 @@ Will produce consistent behaviour, only registering the 1st fault to enter any h
 
 ---
 
-### 2. Panic, Assertions, Expectations
+### 2. Panic-based Assertions
 
 `fault` also allows users to explicitly abort the program with similar actions and reports as the signal/termination handlers. Namely, the user may:
 
@@ -372,7 +374,48 @@ int main() {
 `fault` provides the following utilities:
 
 1. Shutdown requests: if set, it registers SIGINT and SIGTERM to set shutdown requests. This allows users to check, on their code, whenever a termination request has come by simply calling **fault::has_shutdown_request** (`fault_has_shutdown_request` for C users). Users may also set themselves a shutdown request by calling **fault::set_shutdown_request** (`fault_set_shutdown_request` for C users), useful for multi-threaded applications.
-2. **Symbol resolver** script, which can be found in `scripts/symbol_resolver.py`. It can resolve an object trace of the crash report given original .debug files in a subdirectory tree that can be mapped via the BUILD ID that the user gave to `fault` configuration. Alternately, if the fault happened on the same machine as the script, it can take directly the object paths reported in it.
+
+2. Save exceptions across threads. Have you detected abnormal behaviour in one of your threads in which the program needs to abort, but you'd prefer to have it be the main thread to abort so that you can perform needed minimal cleanup your app needs? `fault` makes it so you can save a trace and message from a given thread, signal to main for a shutdown request. Your main logic can then check if a saved trace exists and panic. Result? Your report will contain not only the main trace, but the trace where to which your thread requested to be saved.
+**Note** You may also explicitly save a custom trace, if desired. If using `cpptrace::try_catch` (or similar with its unwind interceptor), `fault` automatically saves a trace from the current exception.
+Example:
+
+```cpp
+// === Thread A ===
+    const auto t = std::thread([] {
+        try {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            foo(); // throws
+        } catch (const std::exception& e) {
+            // Note: you may also pass a custom trace. If within cpptrace interceptor context,
+            // fault automatically saves a trace from exception
+            fault::save_traced_exception(std::format("Exception caught: {}", e.what()));
+            fault::set_shutdown_request();
+        }
+    });
+
+
+// === Main thread ===
+while (!fault::has_shutdown_request() && !myWindow.shouldClose) {
+    // Do main loop
+}
+
+// Loop exit, could have been normal termination (with your own logic), due to external request
+// (SIGINT, SIGTERM), or due to thread exception:
+if (fault::has_saved_traced_exception()) {
+    doCriticalCleanup();
+    fault::panic("Upstream exception");
+} else {
+    doRegularCleanup();
+}
+// Or, more simply (if no side actions needed):
+fault::panic_if_has_saved_exception("Upstream exception");
+doRegularCleanup(); // Means no panic happened
+
+```
+
+
+
+3. **Symbol resolver** script, which can be found in `scripts/symbol_resolver.py`. It can resolve an object trace of the crash report given original .debug files in a subdirectory tree that can be mapped via the BUILD ID that the user gave to `fault` configuration. Alternately, if the fault happened on the same machine as the script, it can take directly the object paths reported in it.
 Example: `python scripts/symbol_resolver.py --use_same_paths=1 path/to/crash_report.log`. **Note** it uses addr2line to resolve the trace. Feel free to customize it to your needs.
 
 

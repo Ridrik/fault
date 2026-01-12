@@ -181,6 +181,18 @@ FAULT_EXPORT bool set_shutdown_request() noexcept;
 FAULT_NODISCARD FAULT_EXPORT bool has_shutdown_request() noexcept;
 
 /**
+ * @brief Saves a traced exception, which will later automatically be appended on panic or
+ * std::terminate handling.
+ * Example: Save a traced exception from a thread, signal main thread with shutdown request, main
+ * thread does cleanup and panics if exception is saved
+ *
+ * @note Thread-safe
+ * @note Not async-signal-safe (implied)
+ */
+FAULT_EXPORT void save_traced_exception(std::string_view msg,
+                                        const ObjectTrace* customTrace = nullptr) noexcept;
+
+/**
  * @brief Returns wether a signal safe object trace can be collected. If false and option to
  * collect regular trace is not selected, then no trace will be attempted on signal handlers or
  * Windows exception handlers
@@ -192,10 +204,10 @@ FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
  * @brief panic implementation
  *
  * @param message message to be displayed on report, stderr and popup
- * @param exceptionTrace Optional bject trace to be logged instead of default generated one.
+ * @param customTrace Optional bject trace to be logged instead of default generated one.
  */
 [[noreturn]] FAULT_EXPORT void panic_impl(std::string_view message,
-                                          const ObjectTrace* exceptionTrace = nullptr);
+                                          const ObjectTrace* customTrace = nullptr);
 
 /**
  * @brief Use this to immediately shutdown the application and perform similar actions as the
@@ -204,14 +216,30 @@ FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
  * Windows, if set, a minidump is generated before terminating the process.
  *
  * @param message message to be displayed on report, stderr and popup
- * @param exceptionTrace optional trace. If set, the report will use it instead of a default
- * generated one. Example: provide a trace after handling an exception using
- * cpptrace::raw_trace_from_current_exception().resolve_object_trace() (converting to ObjectTrace)
  *
  */
-[[noreturn]] inline FAULT_EXPORT void panic(std::string_view message) {
+[[noreturn]] inline FAULT_EXPORT void panic(std::string_view message = {}) {
     panic_impl(message, nullptr);
     FAULT_UNREACHABLE();
+}
+
+/**
+ * @brief Returns wether fault has a saved exception from fault::save_traced_exception.
+ *
+ */
+FAULT_NODISCARD FAULT_EXPORT bool has_saved_traced_exception() noexcept;
+
+/**
+ * @brief panics if any exception was saved via fault::save_traced_exception.
+ * @note for higher customization, user may instead check fault::has_saved_traced_exception, and if
+ * so explicitly panic with one of its overloads
+ *
+ */
+inline FAULT_EXPORT void panic_if_has_saved_exception(std::string_view message = {}) noexcept {
+    if (has_saved_traced_exception()) {
+        panic(message);
+        FAULT_UNREACHABLE();
+    }
 }
 
 /**
@@ -220,7 +248,8 @@ FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
  * @param trace Object trace to be logged instead of default generated one.
  * @param message message to be displayed on report, stderr and popup
  */
-[[noreturn]] inline FAULT_EXPORT void panic(const ObjectTrace& trace, std::string_view message) {
+[[noreturn]] inline FAULT_EXPORT void panic(const ObjectTrace& trace,
+                                            std::string_view message = {}) {
     panic_impl(message, &trace);
     FAULT_UNREACHABLE();
 }
