@@ -61,6 +61,9 @@ namespace utils {
 
 namespace {
 
+static_assert(std::atomic<bool>::is_always_lock_free,
+              "std::atomic<bool> may not be lock free. Use volatile std::sig_atomic_t "
+              "instead.");
 static_assert(std::atomic<int>::is_always_lock_free,
               "std::atomic<int> may not be lock free. Use volatile std::sig_atomic_t "
               "instead.");
@@ -1858,7 +1861,7 @@ bool set_shutdown_request() noexcept {
 }
 
 bool has_shutdown_request() noexcept {
-    return shutdownRequest;
+    return shutdownRequest.load(std::memory_order_acquire);
 }
 
 void save_traced_exception(std::string_view msg, const ObjectTrace* customTrace) noexcept {
