@@ -636,9 +636,13 @@ bool writeReport(std::string_view errContext,
     if (customTrace.has_value()) {
         // Exception: Program is not inside restrictive posix signal handling.
         if (writeResolved) {
-            const auto resolvedTraceStr = (*customTrace).resolve().to_string();
-            utils::safePrint(resolvedTraceStr.c_str(), fd);
-            utils::safePrint("\n(Regular resolved stacktrace used)\n", fd);
+            const auto resolvedTrace = (*customTrace).resolve();
+            utils::safePrint("Stack Trace:\n", fd);
+            for (const auto& frame : resolvedTrace) {
+                utils::safePrint(frame.to_string().c_str(), fd);
+                utils::safePrint("\n", fd);
+            }
+            utils::safePrint("(Regular resolved stacktrace used)\n", fd);
         } else {
             utils::safePrint("Object Trace:\n", fd);
             for (const auto& frame : customTrace->frames) {
@@ -652,9 +656,13 @@ bool writeReport(std::string_view errContext,
             utils::safePrint("(Regular unwind used)\n", fd);
         }
     } else if (writeResolved) {
-        const auto resolvedTraceStr = cpptrace::generate_trace().to_string();
-        utils::safePrint(resolvedTraceStr.c_str(), fd);
-        utils::safePrint("\n(Regular resolved stacktrace used)\n", fd);
+        const auto resolvedTrace = cpptrace::generate_trace();
+        utils::safePrint("Stack Trace:\n", fd);
+        for (const auto& frame : resolvedTrace) {
+            utils::safePrint(frame.to_string().c_str(), fd);
+            utils::safePrint("\n", fd);
+        }
+        utils::safePrint("(Regular resolved stacktrace used)\n", fd);
     } else if (can_collect_safe_trace()) {
         utils::safePrint("Object Trace:\n", fd);
         // Program is inside restrictive signal handling (Possibly linux posix). Collect
