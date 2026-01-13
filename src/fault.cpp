@@ -171,7 +171,7 @@ void getNowSafe(std::int64_t& outSec, std::int64_t& outNsec) {
     outSec = static_cast<std::int64_t>((uli.QuadPart / 10000000ULL) - kUnixOffset);
     outNsec = static_cast<std::int64_t>(((uli.QuadPart % 10000000ULL) * 100));
 #else
-    struct timespec ts {};
+    struct timespec ts{};
     clock_gettime(CLOCK_REALTIME, &ts);
     outSec = ts.tv_sec;
     outNsec = ts.tv_nsec;
@@ -682,14 +682,13 @@ bool writeReport(std::string_view errContext,
         utils::safePrint("(Regular resolved stacktrace used)\n", fd);
     } else if (can_collect_safe_trace()) {
         utils::safePrint("Object Trace:\n", fd);
-        // Program is inside restrictive signal handling (Possibly linux posix). Collect
+        // Program may be inside restrictive signal handling (Possibly linux posix). Collect
         // stacktrace and print safely
         std::array<cpptrace::frame_ptr, 128> buffer{};
         const auto size = cpptrace::safe_generate_raw_trace(buffer.data(), buffer.size());
         for (std::size_t i{0}; i < size; ++i) {
             cpptrace::safe_object_frame objFrame{};
             cpptrace::get_safe_object_frame(buffer[i], &objFrame);
-            objFrame.resolve();
             utils::safePrint(objFrame, fd);
             utils::safePrint("\n", fd);
         }
@@ -1325,7 +1324,7 @@ struct LinuxHandling {
     static inline bool shouldReRaiseSignal{true};
 
     [[noreturn]] static void reRaiseSignal(int sig) noexcept {
-        struct sigaction sa {};
+        struct sigaction sa{};
         sa.sa_handler = SIG_DFL;
         sigemptyset(&sa.sa_mask);
         sa.sa_flags = 0;
@@ -1549,7 +1548,7 @@ struct LinuxHandling {
     [[noreturn]] static void commonActions(std::size_t offset, bool printToStderr, bool writeReport,
                                            const std::optional<cpptrace::object_trace>& customTrace,
                                            bool resolveTrace) {
-        struct sigaction sa {};
+        struct sigaction sa{};
         sigfillset(&sa.sa_mask);
         sa.sa_handler = LinuxHandling::popUpAndExit;
         sigemptyset(&sa.sa_mask);
@@ -1621,7 +1620,7 @@ struct LinuxHandling {
         sigaltstack(&LinuxHandling::gAltstack, nullptr);
 
         // Signal handlers
-        struct sigaction sa {};
+        struct sigaction sa{};
         sa.sa_sigaction = LinuxHandling::linuxSignalHandler;
         sigemptyset(&sa.sa_mask);
         sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
