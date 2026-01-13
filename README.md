@@ -66,7 +66,7 @@ include(FetchContent)
 FetchContent_Declare(
     fault
     GIT_REPOSITORY [https://github.com/Ridrik/fault.git](https://github.com/Ridrik/fault.git)
-    GIT_TAG v0.1.1
+    GIT_TAG v0.1.2
 )
 FetchContent_MakeAvailable(fault)
 
