@@ -222,7 +222,7 @@ FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
  * @param message message to be displayed on report, stderr and popup
  *
  */
-[[noreturn]] inline FAULT_EXPORT void panic(std::string_view message = {}) {
+[[noreturn]] inline void panic(std::string_view message = {}) {
     panic_impl(message, nullptr);
     FAULT_UNREACHABLE();
 }
@@ -239,7 +239,7 @@ FAULT_NODISCARD FAULT_EXPORT bool has_saved_traced_exception() noexcept;
  * so explicitly panic with one of its overloads
  *
  */
-inline FAULT_EXPORT void panic_if_has_saved_exception(std::string_view message = {}) noexcept {
+inline void panic_if_has_saved_exception(std::string_view message = {}) noexcept {
     if (has_saved_traced_exception()) {
         panic(message);
         FAULT_UNREACHABLE();
@@ -252,8 +252,7 @@ inline FAULT_EXPORT void panic_if_has_saved_exception(std::string_view message =
  * @param trace Object trace to be logged instead of default generated one.
  * @param message message to be displayed on report, stderr and popup
  */
-[[noreturn]] inline FAULT_EXPORT void panic(const ObjectTrace& trace,
-                                            std::string_view message = {}) {
+[[noreturn]] inline void panic(const ObjectTrace& trace, std::string_view message = {}) {
     panic_impl(message, &trace);
     FAULT_UNREACHABLE();
 }
@@ -280,7 +279,7 @@ inline FAULT_EXPORT void panic_if_has_saved_exception(std::string_view message =
 template <typename MsgFn>
     requires std::invocable<MsgFn> &&
              std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
-[[noreturn]] FAULT_EXPORT void panic_at(
+[[noreturn]] void panic_at(
     std::string_view expr, std::source_location loc = std::source_location::current(),
     MsgFn&& msgFn = [] { return ""; }) {
     if constexpr (requires { bool(msgFn); }) {
