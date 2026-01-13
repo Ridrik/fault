@@ -1,3 +1,7 @@
+## v0.1.2 - January 2026
+### Updated
+- Code small enhancements against premature use of library utilities
+
 ## v0.1.1 - January 2026
 ### Added
 - std::terminate and panic analysis: `fault` will now log wether terminate or panic was called as a result of an ongoing unwind process (i.e some early code threw but was interrupted before reaching its `catch`)
