@@ -335,7 +335,7 @@ int main() {
 
 The user has a cpptrace::try_catch installed, and is explicitly joining the std::thread created. However, during execution, some function throws. Before reaching the `catch`, `LaunchThread` destructor runs, which sees std::thread in a joinable state and calls std::terminate. Normal object tracing would report the joinable thread as the fault, but not what triggered such sequence. By combining traces from exceptions in `fault` terminate handler, it'll also include the initial fault (in bar): (Note: A fake frame is put in the middle, labelled "====== UPSTREAM ======" for user visibility)
 
-<img src="assets/crash_report_terminate_with_cpptrace_linux.png" alt="Crash report with cpptrace" width="800">
+<img src="assets/crash_report_terminate_with_cpptrace_windows.png" alt="Crash report with cpptrace" width="800">
 
 Another useful example, where one can panic with an explicit trace from exception:
 
