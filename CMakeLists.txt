@@ -57,7 +57,7 @@ target_include_directories(fault PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
-target_compile_features(fault PUBLIC cxx_std_20)
+target_compile_features(fault PRIVATE cxx_std_20)
 
 set_target_properties(fault PROPERTIES
     CXX_VISIBILITY_PRESET hidden

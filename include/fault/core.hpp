@@ -50,6 +50,10 @@
 #ifndef FAULT_CORE_HPP
 #define FAULT_CORE_HPP
 
+#if (defined(_MSVC_LANG) && _MSVC_LANG < 202002L) || (!defined(_MSVC_LANG) && __cplusplus < 202002L)
+#error "Fault C++ headers require C++20. Use 'fault.h' for older C++ or C projects."
+#endif
+
 #include "fault/config.h"
 
 #undef FAULT_EXPECT_AT_IMPL
@@ -69,10 +73,10 @@
 
 #include <cstdint>
 #include <functional>
-#include <optional>
 #include <source_location>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include <fault/attributes.h>
@@ -96,7 +100,7 @@ struct FAULT_EXPORT ObjectTrace {
     std::vector<Frame> frames;
 };
 
-using TerminateHook = void (*)(std::string& userMessage, ObjectTrace& objectTrace);
+using TerminateHook = void (*)(std::string_view userMessage, ObjectTrace& objectTrace);
 
 enum class ConfigWarning : std::uint8_t {
     kNone = 0,
@@ -115,7 +119,7 @@ constexpr ConfigWarning operator|(ConfigWarning a, ConfigWarning b) {
 struct FAULT_EXPORT Config {
     struct TerminateSettings {
         bool enable{true};
-        std::optional<TerminateHook> userHook{std::nullopt};
+        TerminateHook userHook{nullptr};
     };
     struct SignalSettings {
         bool enable{true};

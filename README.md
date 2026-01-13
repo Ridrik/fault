@@ -19,7 +19,8 @@ When a C++ application crashes, the default behavior is often a silent exit or a
   * [Multi-thread fault proof](#1-multi-thread-fault-proof)
   * [Panic, Assertions, Expect](#2-panic-based-assertions)
   * [Panic](#3-panic)
-  * [Integration with cpptrace](#4-integration-with-cpptrace)
+  * [std::terminate + panic features](#4-stdterminate-handler--panic-features)
+    * [cpptrace integration](#41-cpptrace-integration)
 * [C-Language Support](#fault-in-c)
 * [Utilities](#utilities)
 * [Headers](#headers)
@@ -288,9 +289,14 @@ int main() {
 
 ---
 
-### 4. Integration with cpptrace
+### 4. std::terminate handler + panic features
 
-`fault` uses `cpptrace` internally to produce smooth cross-platform traces. This dependency is hidden by default to consumers, but if one wishes to use it, there are some additions that can be used with `fault`. This includes, for instance, automatic traces from exceptions on terminate handling, or override traces for panic. See the example below:
+`fault`'s std::terminate handler, as well as its `panic` expressions, try to gather some information about the fault context, and can provide both hints and enhanced traces to the developer in its report log:
+- Did you have a try/catch, but while something in your code threw, a destructor threw again, resulting in a call to std::terminate? `fault` will see that and alert the user. Plus, if it's with `cpptrace` try/catch, it will even propagate the trace to not only show the std::terminate/panic context, but also what the initial fault (throw) was that triggered the unwind event (see [Example](#41-cpptrace-integration)).
+- Did you save a trace to `fault` (see [Postponing traces and exceptions](#utilities)) but while you your threads were communicating or while your main thread was cleaning up, std::terminate or `panic` was triggered? It will also display as message and logs, including a dedicated propagated trace.
+
+#### 4.1 cpptrace integration
+`fault` uses `cpptrace` internally to produce smooth cross-platform traces. This dependency is hidden by default to consumers, but if one wishes to use it, there are some additions that can be used with `fault`. Expanding from the explanation above, for instance, `fault` will provide automatic traces from exceptions on terminate handling, or override traces for panic. See the example below:
 
 ```cpp
 void terminateTest() {
@@ -375,7 +381,7 @@ int main() {
 
 1. Shutdown requests: if set, it registers SIGINT and SIGTERM to set shutdown requests. This allows users to check, on their code, whenever a termination request has come by simply calling **fault::has_shutdown_request** (`fault_has_shutdown_request` for C users). Users may also set themselves a shutdown request by calling **fault::set_shutdown_request** (`fault_set_shutdown_request` for C users), useful for multi-threaded applications.
 
-2. Save exceptions across threads. Have you detected abnormal behaviour in one of your threads in which the program needs to abort, but you'd prefer to have it be the main thread to abort so that you can perform needed minimal cleanup your app needs? `fault` makes it so you can save a trace and message from a given thread, signal to main for a shutdown request. Your main logic can then check if a saved trace exists and panic. Result? Your report will contain not only the main trace, but the trace where to which your thread requested to be saved.
+2. Save exceptions across threads. Have you detected abnormal behaviour in one of your threads in which the program needs to abort, but you'd prefer to have it be the main thread to abort so that you can perform needed minimal cleanup your app needs to save user's data? `fault` makes it so you can save a trace and message from a given thread, and signal to main for a shutdown request. Your main logic can then check if a saved trace exists and panic. Result? Your report will contain not only the main trace, but the trace to which your thread requested to be saved.
 **Note** You may also explicitly save a custom trace, if desired. If using `cpptrace::try_catch` (or similar with its unwind interceptor), `fault` automatically saves a trace from the current exception.
 Example:
 
@@ -403,10 +409,10 @@ while (!fault::has_shutdown_request() && !myWindow.shouldClose) {
 // (SIGINT, SIGTERM), or due to thread exception:
 if (fault::has_saved_traced_exception()) {
     doCriticalCleanup();
-    fault::panic("Upstream exception");
-} else {
-    doRegularCleanup();
+    fault::panic("Upstream exception"); // noreturn
 }
+doRegularCleanup();
+
 // Or, more simply (if no side actions needed):
 fault::panic_if_has_saved_exception("Upstream exception");
 doRegularCleanup(); // Means no panic happened
@@ -514,7 +520,7 @@ Fault uses a main, core, header, alongside optional ones that extend functionali
 | fault/core.hpp | core functionality, including initialization, panic & assertion, utilities | Suitable for most c++ consumers when not using format-based arguments or cpptrace adapter |
 | fault/format.hpp | overloads or versions for panic and assertion functions & macros | Needed for std::format based strings |
 | fault/fault.hpp | Everything accessible from `fault` C++ headers, minus the adapter | Recommended to use if you don't mind the `<format>` header |
-| fault/adapter/stacktrace.hpp | Simple header-only conversion between `cpptrace` and `fault` | Ensures that consumers do not need to depend directly on `cpptrace` unless override traces are desired |
+| fault/adapter/stacktrace.hpp | Simple header-only conversion between `cpptrace` and `fault` | You'll only need this if you're using `cpptrace` directly and would like to provide a custom trace |
 | fault/fault.h | Header for C consumers | If this library is pre-compiled, and you are using an older C++ version than C++20, then you may also use this |
 
 ---

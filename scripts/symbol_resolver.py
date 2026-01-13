@@ -72,7 +72,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "trace", 
-        help="Path to the .trace file received from the user."
+        help="Path to the trace file received from the user."
     )
     parser.add_argument(
         "--symbols", 

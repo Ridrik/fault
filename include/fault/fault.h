@@ -1,6 +1,8 @@
 #ifndef FAULT_H
 #define FAULT_H
 
+// NOLINTBEGIN(modernize-*)
+
 #include <stdint.h>
 
 #include <fault/attributes.h>
@@ -45,6 +47,7 @@ typedef struct FaultConfig {
     bool useUnsafeStacktraceOnSignalFallback;
     bool resolveNonSignalTrace;
     bool generateMiniDumpWindows;
+    bool enableTerminate;  // In case you're a C++ user below C++20 (defaults to false)
     struct SignalSettings signal;
     struct PanicSettings panic;
 } FaultConfig;
@@ -173,5 +176,7 @@ static inline void fault_verify_c(bool cond, fault_msg_callback_t callback, void
 #ifdef __cplusplus
 }  // extern "C"
 #endif
+
+// NOLINTEND(modernize-*)
 
 #endif  // FAULT_H
