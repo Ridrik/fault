@@ -22,7 +22,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 
 #include <cpptrace/basic.hpp>
@@ -172,7 +171,7 @@ void getNowSafe(std::int64_t& outSec, std::int64_t& outNsec) {
     outSec = static_cast<std::int64_t>((uli.QuadPart / 10000000ULL) - kUnixOffset);
     outNsec = static_cast<std::int64_t>(((uli.QuadPart % 10000000ULL) * 100));
 #else
-    struct timespec ts{};
+    struct timespec ts {};
     clock_gettime(CLOCK_REALTIME, &ts);
     outSec = ts.tv_sec;
     outNsec = ts.tv_nsec;
@@ -239,7 +238,7 @@ void safeWriteHex(std::uintptr_t value, HANDLE hFile = hFileDefault) noexcept {
 
 void writePreciseTimeSafe(char* buffer, std::size_t& offset, std::size_t capacity,
                           const char* initDateStr, std::int64_t initSecondsSinceEpoch,
-                          std::int64_t initNanoSecondsSinceEpoch) {
+                          std::int64_t initNanoSecondsSinceEpoch, bool initWritten) {
     std::int64_t tvSec{};
     std::int64_t tvNSec{};
     getNowSafe(tvSec, tvNSec);
@@ -256,21 +255,29 @@ void writePreciseTimeSafe(char* buffer, std::size_t& offset, std::size_t capacit
     tempBuf[9] = static_cast<char>((ms / 100) + '0');
     tempBuf[10] = static_cast<char>(((ms / 10) % 10) + '0');
     tempBuf[11] = static_cast<char>((ms % 10) + '0');
-    safeAppend(buffer, offset, capacity, "Fault Date: ");
-    safeAppend(buffer, offset, capacity, initDateStr, 10);
-    const auto initDaysSinceEpoch = initSecondsSinceEpoch / 86400;
-    if (initDaysSinceEpoch > daysSinceEpoch) {
-        safeAppend(buffer, offset, capacity, " + ");
-        itoaSafeAppend(buffer, offset, capacity, initDaysSinceEpoch - daysSinceEpoch);
-        safeAppend(buffer, offset, capacity, " days\n");
-    } else {
-        safeAppend(buffer, offset, capacity, "\n");
+    if (initWritten) {
+        safeAppend(buffer, offset, capacity, "Fault Date: ");
+        constexpr std::size_t kInitDateLenUpToDay{10};
+        safeAppend(buffer, offset, capacity, initDateStr,
+                   std::min(kInitDateLenUpToDay, std::strlen(initDateStr)));
+        const auto initDaysSinceEpoch = initSecondsSinceEpoch / 86400;
+        if (daysSinceEpoch > initDaysSinceEpoch) {
+            safeAppend(buffer, offset, capacity, " + ");
+            itoaSafeAppend(buffer, offset, capacity, daysSinceEpoch - initDaysSinceEpoch);
+            safeAppend(buffer, offset, capacity, " days\n");
+        } else {
+            safeAppend(buffer, offset, capacity, "\n");
+        }
     }
     safeAppend(buffer, offset, capacity, "Fault Time: ");
     safeAppend(buffer, offset, capacity, tempBuf.data(), 12);
     safeAppend(buffer, offset, capacity, " UTC\n");
     safeAppend(buffer, offset, capacity, "Unix Epoch: ");
     itoaSafeAppend(buffer, offset, capacity, tvSec);
+    if (!initWritten) {
+        safeAppend(buffer, offset, capacity, "\n");
+        return;
+    }
     std::int64_t uptimeSec = tvSec - initSecondsSinceEpoch;
     std::int64_t uptimeNSec = tvNSec - initNanoSecondsSinceEpoch;
     if (uptimeNSec < 0) {
@@ -436,18 +443,19 @@ std::optional<std::string> rethrowAndAppendSavedExceptionTrace(cpptrace::object_
 
 namespace _internal {
 
-std::array<char, 64> gInitTimeStr{};  // NOLINT
-struct RawTime {
-    std::int64_t tvSec;
-    std::int64_t tvNsec;
-} gInitTimeRaw;  // NOLINT
+struct {
+    std::array<char, 64> str{};
+    std::int64_t tvSec{};
+    std::int64_t tvNsec{};
+    bool written{false};
+} gInitTime{};  // NOLINT
 
 std::tm timeInit() {
     const auto now = std::chrono::system_clock::now();
     const auto duration = now.time_since_epoch();
     const auto secs = std::chrono::duration_cast<std::chrono::seconds>(duration);
-    gInitTimeRaw.tvSec = secs.count();
-    gInitTimeRaw.tvNsec = static_cast<long>(
+    gInitTime.tvSec = secs.count();
+    gInitTime.tvNsec = static_cast<long>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(duration - secs).count());
 
     const std::time_t t = std::chrono::system_clock::to_time_t(now);
@@ -459,8 +467,9 @@ std::tm timeInit() {
 #endif
     std::array<char, 24> baseTime{};
     std::strftime(baseTime.data(), baseTime.size(), "%Y-%m-%d %H:%M:%S", &tmInfo);
-    const auto ms = static_cast<int>(gInitTimeRaw.tvNsec / 1000000);
-    std::snprintf(gInitTimeStr.data(), gInitTimeStr.size(), "%s.%03d UTC", baseTime.data(), ms);
+    const auto ms = static_cast<int>(gInitTime.tvNsec / 1000000);
+    std::snprintf(gInitTime.str.data(), gInitTime.str.size(), "%s.%03d UTC", baseTime.data(), ms);
+    gInitTime.written = true;
     return tmInfo;
 }
 
@@ -484,10 +493,12 @@ struct Config {
         static inline bool canWriteDump{false};
         static inline std::array<char, 512> dumpPath{"crash_dump.dmp"};
     };
-    std::array<char, 512> baseErrorMessage{'\0'};
-    std::array<char, 128> appName{'\0'};
-    std::array<char, 128> buildID{'\0'};
-    std::array<char, 512> crashPath{"crash_report.raw"};
+    std::array<char, 512> baseErrorMessage{
+        "The application encountered a fatal error and must close. If the problem persists, please "
+        "contact the program maintainer."};
+    std::array<char, 128> appName{};
+    std::array<char, 128> buildID{};
+    std::array<char, 512> crashPath{"crash_report.log"};
     std::atomic<bool> isReportWritable{true};
     bool showPopUp{true};
     bool printMsgToStdErr{true};
@@ -632,8 +643,10 @@ bool writeReport(std::string_view errContext,
     utils::safePrint(config.appName.data(), fd);
     utils::safePrint("\nBuild ID: ", fd);
     utils::safePrint(config.buildID.data(), fd);
-    utils::safePrint("\nInit Timestamp: ", fd);
-    utils::safePrint(_internal::gInitTimeStr.data(), fd);
+    if (_internal::gInitTime.written) {
+        utils::safePrint("\nInit Timestamp: ", fd);
+        utils::safePrint(_internal::gInitTime.str.data(), fd);
+    }
     utils::safePrint("\n\n", fd);
     utils::safePrint(errContext.data(), errContext.size(), fd);
     utils::safePrint("\n", fd);
@@ -999,8 +1012,8 @@ struct WindowsHandling {
                           WindowsHandling::finalBuffer.size(), "\n");
         utils::writePreciseTimeSafe(WindowsHandling::finalBuffer.data(), offset,
                                     WindowsHandling::finalBuffer.size(),
-                                    _internal::gInitTimeStr.data(), _internal::gInitTimeRaw.tvSec,
-                                    _internal::gInitTimeRaw.tvNsec);
+                                    _internal::gInitTime.str.data(), _internal::gInitTime.tvSec,
+                                    _internal::gInitTime.tvNsec, _internal::gInitTime.written);
         WindowsHandling::offsetForMsg = offset;
         if (!details.empty()) {
             utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
@@ -1312,7 +1325,7 @@ struct LinuxHandling {
     static inline bool shouldReRaiseSignal{true};
 
     [[noreturn]] static void reRaiseSignal(int sig) noexcept {
-        struct sigaction sa{};
+        struct sigaction sa {};
         sa.sa_handler = SIG_DFL;
         sigemptyset(&sa.sa_mask);
         sa.sa_flags = 0;
@@ -1385,8 +1398,8 @@ struct LinuxHandling {
                           LinuxHandling::finalBuffer.size(), "\n\n");
         utils::writePreciseTimeSafe(LinuxHandling::finalBuffer.data(), offset,
                                     LinuxHandling::finalBuffer.size(),
-                                    _internal::gInitTimeStr.data(), _internal::gInitTimeRaw.tvSec,
-                                    _internal::gInitTimeRaw.tvNsec);
+                                    _internal::gInitTime.str.data(), _internal::gInitTime.tvSec,
+                                    _internal::gInitTime.tvNsec, _internal::gInitTime.written);
     }
 
     static void writeSummaryMessageToBuffer(int sig, const siginfo_t* info,
@@ -1451,8 +1464,8 @@ struct LinuxHandling {
         }
         utils::writePreciseTimeSafe(LinuxHandling::finalBuffer.data(), offset,
                                     LinuxHandling::finalBuffer.size(),
-                                    _internal::gInitTimeStr.data(), _internal::gInitTimeRaw.tvSec,
-                                    _internal::gInitTimeRaw.tvNsec);
+                                    _internal::gInitTime.str.data(), _internal::gInitTime.tvSec,
+                                    _internal::gInitTime.tvNsec, _internal::gInitTime.written);
     }
 
     static void writeReportDetailsToBuffer(const ucontext_t* ctx, std::size_t& offset) noexcept {
@@ -1536,7 +1549,7 @@ struct LinuxHandling {
     [[noreturn]] static void commonActions(std::size_t offset, bool printToStderr, bool writeReport,
                                            const std::optional<cpptrace::object_trace>& customTrace,
                                            bool resolveTrace) {
-        struct sigaction sa{};
+        struct sigaction sa {};
         sigfillset(&sa.sa_mask);
         sa.sa_handler = LinuxHandling::popUpAndExit;
         sigemptyset(&sa.sa_mask);
@@ -1608,7 +1621,7 @@ struct LinuxHandling {
         sigaltstack(&LinuxHandling::gAltstack, nullptr);
 
         // Signal handlers
-        struct sigaction sa{};
+        struct sigaction sa {};
         sa.sa_sigaction = LinuxHandling::linuxSignalHandler;
         sigemptyset(&sa.sa_mask);
         sa.sa_flags = SA_SIGINFO | SA_ONSTACK;

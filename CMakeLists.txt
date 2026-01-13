@@ -69,6 +69,7 @@ if(WIN32)
     target_link_libraries(fault PRIVATE
         ws2_32 dbghelp ole32
     )
+    target_compile_definitions(fault PRIVATE NOMINMAX) # prevent Windows min/max macros
 endif()
 
 target_link_libraries(fault PRIVATE cpptrace::cpptrace)
