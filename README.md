@@ -530,7 +530,7 @@ The goal of this library is to provide safeguards that work reliably against all
 
 Another goal of `fault` is to be non-intrusive in saving a trace. It does not try to resolve symbols by default, making it useful for production scenarios where, in case of a fault, the user/client can simply send the reports for you to resolve locally given your debug files.
 
-Lastly, `fault` provides a modern framework for `panic` based commands and assertions, which is backed up by `fault`'s overall termination handling. Users may find interesting as replacement for macros whenever applicable, as well as having invocable and format-based options, wether function-based or macro-based. Macros are also readily available for each version, and can even be combined
+Lastly, `fault` provides a modern framework for `panic` based commands and assertions, which is backed up by `fault`'s overall termination handling. Users may find interesting as replacement for macros whenever applicable, as well as having invocable and format-based options, wether function-based or macro-based. Macros are also readily available for each version, and are still the choice for debug-only assertions.
 
 [↑ Back to Top](#fault)
 
