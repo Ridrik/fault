@@ -414,6 +414,7 @@ void saveException(std::string_view msg, const ObjectTrace* customTrace) noexcep
 }
 
 std::optional<std::string> rethrowAndAppendSavedExceptionTrace(cpptrace::object_trace& baseTrace) {
+    std::lock_guard lock{mutex};
     if (pendingException == nullptr) {
         return std::nullopt;
     }

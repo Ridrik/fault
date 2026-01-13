@@ -216,7 +216,7 @@ int main() {
     // Expect: Always on, location information by default on debug builds
     fault::expect(result == 7, "Math is broken");
     
-    // Each invariant check has a callable version for lazy evaluation
+    // Each invariant check has a callable version for deferred evaluation
     fault::expect(result == 7, [&] {
         return std::format(
             "This is a large formatted string on the heap that prints a complex context struct {}. This callable "
@@ -333,7 +333,7 @@ int main() {
 }
 ```
 
-The user has a cpptrace::try_catch installed, and is explicitly joining the std::thread created. However, during execution, some function throws. Before reaching the `catch`, `LaunchThread` destructor runs, which sees std::thread in a joinable state and calls std::terminate. Normal object tracing would report the joinable thread as the fault, but not what triggered such sequence. By combining traces from exceptions in `fault` terminate handler, it'll also include the initial fault (in bar): (Note: A fake frame is put in the middle, labelled "====== UPSTREAM ======" for user visibility)
+The user has a cpptrace::try_catch installed, and is explicitly joining the std::thread created. However, during execution, some function throws. Before reaching the `catch`, `LaunchThread` destructor runs, which sees std::thread in a joinable state and calls std::terminate. Normal object tracing would report the joinable thread as the fault, but not what triggered such sequence. By combining traces from exceptions in `fault` terminate handler, it'll also include the initial fault (in bar): (Note: An artifitial frame is put in the middle, labelled "====== UPSTREAM ======" for user visibility)
 
 <img src="assets/crash_report_terminate_with_cpptrace_windows.png" alt="Crash report with cpptrace" width="800">
 
@@ -418,7 +418,6 @@ fault::panic_if_has_saved_exception("Upstream exception");
 doRegularCleanup(); // Means no panic happened
 
 ```
-
 
 
 3. **Symbol resolver** script, which can be found in `scripts/symbol_resolver.py`. It can resolve an object trace of the crash report given original .debug files in a subdirectory tree that can be mapped via the BUILD ID that the user gave to `fault` configuration. Alternately, if the fault happened on the same machine as the script, it can take directly the object paths reported in it.
@@ -538,7 +537,7 @@ Lastly, `fault` provides a modern framework for `panic` based commands and asser
 ---
 
 ## 🧩 Third-Party Components and Licenses
-`fault` uses `cpptrace` as driving mechanism to collect object traces smoothly across both platforms, and, whenever applicable, signal safe traces. 
+`fault` uses `cpptrace` as driving mechanism to collect object traces smoothly across both platforms, and, whenever applicable, signal safe traces. See `LICENSE_3RD_PARTY` for the explicit component License.
 
 | Component | Purpose | License |
 | ---------- | -------- | -------- |
