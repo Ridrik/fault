@@ -21,7 +21,7 @@ When a C++ application crashes, the default behavior is often a silent exit or a
   * [Panic](#3-panic)
   * [std::terminate + panic features](#4-stdterminate-handler--panic-features)
     * [cpptrace integration](#41-cpptrace-integration)
-* [C-Language Support](#fault-in-c)
+* [C-Language/Older C++ Support](#fault-in-c)
 * [Utilities](#utilities)
 * [Headers](#headers)
 * [Author's Note](#authors-note)
@@ -428,7 +428,7 @@ Example: `python scripts/symbol_resolver.py --use_same_paths=1 path/to/crash_rep
 
 ## `fault` in C
 
-`fault` works for C consumers, thanks to its `fault.h` API header. The behaviour largely mimics the one in C++, with the obvious exception of having no std::terminate handling.
+When pre-compiled, `fault` works for C consumers and C++ consumers on older standards, thanks to its `fault.h` API header. The behaviour largely mimics the one in C++.
 
 ```c
 void infinite_recursion() {
