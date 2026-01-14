@@ -1,3 +1,10 @@
+## v0.1.3 - January 2026
+### Updated
+- Fix related with typo in uptime calculation in fault report & popup
+- Code attribute small enhancements
+- clang-tidy header & source separation (internal)
+- Fixed export attributes on inline header functions
+
 ## v0.1.2 - January 2026
 ### Updated
 - Code small enhancements against premature use of library utilities
