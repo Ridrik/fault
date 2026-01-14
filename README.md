@@ -74,7 +74,7 @@ FetchContent_MakeAvailable(fault)
 target_link_libraries(my_app PRIVATE fault::fault)
 ```
 
-By default, `fault` is fetched either as dynamic or static library, depending on ${BUILD_SHARED_LIBS}. Users may override it using FAULT_BUILD_SHARED=On/Off (boolean).
+By default, `fault` is fetched either as dynamic or static library, depending on ${BUILD_SHARED_LIBS} (On if not defined). Users may override it using FAULT_BUILD_SHARED=On/Off (boolean).
 (Note: When building from source, cpptrace is fetched as part of it if FAULT_BUNDLE_CPPTRACE=On is selected (default), unless the target already exists. The same configurational options for cpptrace apply).
 
 **Note** on State: If you link `fault` statically into multiple shared objects (DLLs/SOs) within the same process, each module will maintain its own independent configuration state. To share state across boundaries, build ``fault` as a shared library.
