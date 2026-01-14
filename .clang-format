@@ -14,18 +14,10 @@ EmptyLineBeforeAccessModifier: Always
 IndentRequires: true
 SortIncludes: true
 IncludeBlocks: Regroup
-# C++ specific tweaks
 DerivePointerAlignment: false
-# Tell Clang-Format what the "main" header looks like.
 IncludeCategories:
-  # 1 - Header matching current source file
-  - Regex: '^<glad/.*>'
-    Priority: 0
-    SortPriority: 0
-    CaseSensitive: true
-
-  #Priority 1: Main header (automatic, but you could make explicit)
-  - Regex: '^".*\.h"$'  # if you want to be explicit
+  #Priority 1: Main header
+  - Regex: '^".*\.h"$'
     Priority: 1
     SortPriority: 1
 
@@ -45,12 +37,6 @@ IncludeCategories:
   - Regex: '.*'
     Priority: 4
     SortPriority: 4
-    CaseSensitive: true
-
-  # Priority 5: project headers
-  - Regex: '^"dronelab/.*"'
-    Priority: 5
-    SortPriority: 5
     CaseSensitive: true
 
 IncludeIsMainRegex: '.*'

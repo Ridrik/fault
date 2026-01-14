@@ -33,6 +33,10 @@ set(FAULT_GENERATED_HEADERS
     "${CMAKE_CURRENT_BINARY_DIR}/include/fault/fault_export.h"
 )
 
+if (NOT DEFINED BUILD_SHARED_LIBS)
+    set(BUILD_SHARED_LIBS ON) # let fault default to shared library
+endif()
+
 option(FAULT_BUILD_SHARED "Build fault as a shared library" ${BUILD_SHARED_LIBS})
 if(FAULT_BUILD_SHARED)
     message(STATUS "Building fault as shared library")

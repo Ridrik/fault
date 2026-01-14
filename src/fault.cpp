@@ -153,12 +153,12 @@ void itoaSafeAppend(char* buffer, std::size_t& offset, std::size_t capacity,
     buffer[offset] = '\0';
 }
 
-void fmt2d(char* buf, std::uint32_t val) {
+void fmt2d(char* buf, std::uint32_t val) noexcept {
     buf[0] = static_cast<char>((val / 10) + '0');
     buf[1] = static_cast<char>((val % 10) + '0');
 }
 
-void getNowSafe(std::int64_t& outSec, std::int64_t& outNsec) {
+void getNowSafe(std::int64_t& outSec, std::int64_t& outNsec) noexcept {
 #ifdef _WIN32
     FILETIME ft;
     GetSystemTimePreciseAsFileTime(&ft);
@@ -238,7 +238,7 @@ void safeWriteHex(std::uintptr_t value, HANDLE hFile = hFileDefault) noexcept {
 
 void writePreciseTimeSafe(char* buffer, std::size_t& offset, std::size_t capacity,
                           const char* initDateStr, std::int64_t initSecondsSinceEpoch,
-                          std::int64_t initNanoSecondsSinceEpoch, bool initWritten) {
+                          std::int64_t initNanoSecondsSinceEpoch, bool initWritten) noexcept {
     std::int64_t tvSec{};
     std::int64_t tvNSec{};
     getNowSafe(tvSec, tvNSec);
@@ -282,7 +282,7 @@ void writePreciseTimeSafe(char* buffer, std::size_t& offset, std::size_t capacit
     std::int64_t uptimeNSec = tvNSec - initNanoSecondsSinceEpoch;
     if (uptimeNSec < 0) {
         uptimeSec -= 1;
-        uptimeSec += 1000000000L;
+        uptimeNSec += 1000000000L;
     }
     const std::int64_t uptimeMilliSec = uptimeNSec / 1000000;
     std::array<char, 3> msBuf{};
@@ -310,7 +310,7 @@ void safePrint(const cpptrace::safe_object_frame& frame,
     safePrint(&frame.object_path[0], fd);
 }
 
-inline std::size_t strSafeCopy(char* dest, std::size_t maxLen, std::string_view src) {
+inline std::size_t strSafeCopy(char* dest, std::size_t maxLen, std::string_view src) noexcept {
     const auto baseLen = std::min(maxLen - 1, src.size());
     std::memcpy(dest, src.data(), baseLen);
     dest[baseLen] = '\0';
@@ -388,7 +388,7 @@ class TracedException : public std::exception {
     TracedException(std::string msg, cpptrace::object_trace&& trace)
         : msg_{std::move(msg)}, trace_{std::move(trace)} {}
 
-    [[nodiscard]] const cpptrace::object_trace& getTrace() const {
+    [[nodiscard]] const cpptrace::object_trace& getTrace() const noexcept {
         return trace_;
     }
 
@@ -420,7 +420,8 @@ void saveException(std::string_view msg, const ObjectTrace* customTrace) noexcep
         TracedException{!msg.empty() ? std::string{msg} : "Unspecified", std::move(trace)});
 }
 
-std::optional<std::string> rethrowAndAppendSavedExceptionTrace(cpptrace::object_trace& baseTrace) {
+std::optional<std::string> rethrowAndAppendSavedExceptionTrace(
+    cpptrace::object_trace& baseTrace) noexcept {
     std::lock_guard lock{mutex};
     if (pendingException == nullptr) {
         return std::nullopt;
@@ -450,7 +451,7 @@ struct {
     bool written{false};
 } gInitTime{};  // NOLINT
 
-std::tm timeInit() {
+std::tm timeInit() noexcept {
     const auto now = std::chrono::system_clock::now();
     const auto duration = now.time_since_epoch();
     const auto secs = std::chrono::duration_cast<std::chrono::seconds>(duration);
@@ -508,7 +509,7 @@ struct Config {
     TerminateSettings terminate;
     PanicSettings panic;
 
-    [[nodiscard]] InitResult fromAPI(const ::fault::Config& config) {
+    [[nodiscard]] InitResult fromAPI(const ::fault::Config& config) noexcept {
         InitResult result{.success = true, .warnings = ConfigWarning::kNone};
         const auto baseErrorMsgToCopy =
             config.baseErrorMsg.empty() ? kDefaultErrorMessage : config.baseErrorMsg;
@@ -593,7 +594,7 @@ std::atomic<int> canReadKDialogPath{1};                 // NOLINT
     FAULT_UNREACHABLE();
 }
 
-void writeToStdErr(std::string_view message) {
+void writeToStdErr(std::string_view message) noexcept {
     static std::atomic<bool> hasBeenHandled{false};
     bool expected{false};
     if (!hasBeenHandled.compare_exchange_strong(expected, true)) {
@@ -731,10 +732,20 @@ void showPopUp(const char* title, const char* message) noexcept {
 #ifdef _WIN32
     std::array<wchar_t, 128> titleWide{};
     std::array<wchar_t, 2048> messageWide{};
-    utils::utf8ToUtf16Stack(title, titleWide.data(), titleWide.size());
-    utils::utf8ToUtf16Stack(message, messageWide.data(), messageWide.size());
-    MessageBoxW(nullptr, messageWide.data(), titleWide.data(),
-                MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND | MB_TOPMOST);
+    if (!utils::utf8ToUtf16Stack(title, titleWide.data(), titleWide.size()) ||
+        !utils::utf8ToUtf16Stack(message, messageWide.data(), messageWide.size())) {
+        // Not expected to ever fail, but for 100% correctness
+        constexpr const wchar_t* const kWideMsg{
+            // This is a literal copy of kDefaultErrorMessage in wide char
+            L"The application encountered a fatal error and must close. If the problem "
+            "persists, please "
+            "contact the program maintainer."};
+        MessageBoxW(nullptr, kWideMsg, L"Fatal Error",
+                    MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND | MB_TOPMOST);
+    } else {
+        MessageBoxW(nullptr, messageWide.data(), titleWide.data(),
+                    MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND | MB_TOPMOST);
+    }
 #else
     if (ExitHandler::canReadZenityPath == 0 && ExitHandler::canReadKDialogPath == 0) {
         return;
@@ -893,7 +904,7 @@ struct WindowsHandling {
         return true;
     }
 
-    static bool writeMiniDump(const PEXCEPTION_POINTERS exceptionPtrs = nullptr) {
+    static bool writeMiniDump(const PEXCEPTION_POINTERS exceptionPtrs = nullptr) noexcept {
         std::array<wchar_t, _internal::Config::Windows::dumpPath.size()> dumpPathW{};
         const HANDLE hFile = utils::utf8ToUtf16Stack(_internal::Config::Windows::dumpPath.data(),
                                                      dumpPathW.data(), dumpPathW.size())
@@ -1041,7 +1052,7 @@ struct WindowsHandling {
     }
 
     static void windowsCommonProcessSignalEvent(const PEXCEPTION_POINTERS exceptionInfo,
-                                                std::string_view description) {
+                                                std::string_view description) noexcept {
         if (!WindowsHandling::checkPermissions()) {
             return;
         }
@@ -1068,7 +1079,7 @@ struct WindowsHandling {
         }
     }
 
-    [[noreturn]] static void winAbortHandler(int /*sig*/) {
+    [[noreturn]] static void winAbortHandler(int /*sig*/) noexcept {
         constexpr DWORD kAbortCode{3};
         constexpr PEXCEPTION_POINTERS kNoContextPtr{nullptr};
         WindowsHandling::windowsCommonProcessSignalEvent(
@@ -1078,7 +1089,7 @@ struct WindowsHandling {
         FAULT_UNREACHABLE();
     }
 
-    static LONG WINAPI windowsExceptionHandler(const PEXCEPTION_POINTERS exceptionInfo) {
+    static LONG WINAPI windowsExceptionHandler(const PEXCEPTION_POINTERS exceptionInfo) noexcept {
         const DWORD code = exceptionInfo->ExceptionRecord->ExceptionCode;
         const bool fatal =
             code == EXCEPTION_STACK_OVERFLOW || code == EXCEPTION_ACCESS_VIOLATION ||
@@ -1105,7 +1116,7 @@ struct WindowsHandling {
     [[noreturn]] static void fromTerminate(std::string_view msg, std::string_view details, int code,
                                            bool printToStderr, bool writeReport,
                                            const cpptrace::object_trace& customTrace,
-                                           bool showPopUp, bool resolveTrace) {
+                                           bool showPopUp, bool resolveTrace) noexcept {
         if (!WindowsHandling::checkPermissions()) {
             ExitHandler::shutdown(code);
             FAULT_UNREACHABLE();
@@ -1527,7 +1538,7 @@ struct LinuxHandling {
         ++LinuxHandling::tryCount;
     }
 
-    [[noreturn]] static void linuxSignalHandler(int sig, siginfo_t* info, void* uctx) {
+    [[noreturn]] static void linuxSignalHandler(int sig, siginfo_t* info, void* uctx) noexcept {
         LinuxHandling::checkPermissions();
         LinuxHandling::signal = sig;
         LinuxHandling::isRestrictive = true;
@@ -1547,7 +1558,7 @@ struct LinuxHandling {
 
     [[noreturn]] static void commonActions(std::size_t offset, bool printToStderr, bool writeReport,
                                            const std::optional<cpptrace::object_trace>& customTrace,
-                                           bool resolveTrace) {
+                                           bool resolveTrace) noexcept {
         struct sigaction sa{};
         sigfillset(&sa.sa_mask);
         sa.sa_handler = LinuxHandling::popUpAndExit;
@@ -1581,7 +1592,7 @@ struct LinuxHandling {
     [[noreturn]] static void fromTerminate(std::string_view msg, std::string_view details, int code,
                                            bool printToStderr, bool writeReport,
                                            const cpptrace::object_trace& customTrace,
-                                           bool showPopUp, bool resolveTrace) {
+                                           bool showPopUp, bool resolveTrace) noexcept {
         LinuxHandling::checkPermissions();
         LinuxHandling::isRestrictive = false;
         LinuxHandling::signal = code;
@@ -1798,7 +1809,7 @@ struct TerminateHandling {
     [[noreturn]] static void controlledShutdown(std::string_view message, std::string_view details,
                                                 bool printToStderr, bool writeReport,
                                                 const cpptrace::object_trace& customTrace,
-                                                bool showPopUp) {
+                                                bool showPopUp) noexcept {
 #if defined(__linux__)
         constexpr int kTerminateCode{SIGABRT};
         LinuxHandling::fromTerminate(message, details, kTerminateCode, printToStderr, writeReport,
@@ -1838,7 +1849,7 @@ void setup(bool enableHandlers, bool enableShutdownRequest) noexcept {
 #endif
 }
 
-void doInit() {
+void doInit() noexcept {
     warmupCpptrace();  // If cpptrace is a shared library (it is currently), ensures proper
                        // dynamic page loading in case it would otherwise behave in a lazy
                        // implementation that could compromise it's use in a signal handler
@@ -1955,7 +1966,7 @@ void panic_at(std::string_view expr, std::source_location loc, std::string_view 
     FAULT_UNREACHABLE();
 }
 
-::FaultInitResult fromCppInitResult(InitResult cppRes) {
+::FaultInitResult fromCppInitResult(InitResult cppRes) noexcept {
     return ::FaultInitResult{
         .success = cppRes.success,
         .warnings = static_cast<::FaultConfigWarning>(static_cast<std::uint8_t>(cppRes.warnings))};
