@@ -777,8 +777,6 @@ void safeAppendVEHInfo(struct _EXCEPTION_POINTERS* pExc, char* buffer, std::size
         (pExc->ContextRecord == nullptr)) {
         return;
     }
-
-    const EXCEPTION_RECORD& rec = *pExc->ExceptionRecord;
     const CONTEXT& ctx = *pExc->ContextRecord;
     std::array<char, 19> regBuff{};
 
