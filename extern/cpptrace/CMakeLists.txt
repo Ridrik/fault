@@ -11,7 +11,7 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 FetchContent_Declare(
   cpptrace
   GIT_REPOSITORY https://github.com/jeremy-rifkin/cpptrace.git
-  GIT_TAG        v1.0.4 
+  GIT_TAG        ${FAULT_CPPTRACE_TAG} 
 )
 FetchContent_MakeAvailable(cpptrace)
 set(CMAKE_CXX_SCAN_FOR_MODULES ${PREV_SCAN_SETTING})
