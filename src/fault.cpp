@@ -329,9 +329,9 @@ bool verifyWriteAccess(const std::string& p) noexcept {
     return true;
 }
 
-ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fileName,
-                               std::span<char> writeDir, bool prefixDate, const std::tm& timeInfo,
-                               std::string_view extension) noexcept {
+v1::ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fileName,
+                                   std::span<char> writeDir, bool prefixDate,
+                                   const std::tm& timeInfo, std::string_view extension) noexcept {
     try {
         std::string finalPathStr;
         std::string fullFileName;
@@ -358,20 +358,20 @@ ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fileNam
             auto fallbackPath = std::filesystem::absolute(fullFileName, ec);
             fallbackPath.replace_filename(extension);
             if (ec) {
-                return ConfigWarning::kInvalidPath;
+                return v1::ConfigWarning::kInvalidPath;
             }
             finalPathStr = std::move(fallbackPath).string();
         }
         if (finalPathStr.size() >= writeDir.size()) {
-            return ConfigWarning::kReportPathTooLong;
+            return v1::ConfigWarning::kReportPathTooLong;
         }
         if (!verifyWriteAccess(finalPathStr)) {
-            return ConfigWarning::kReportPathWriteTestFailed;
+            return v1::ConfigWarning::kReportPathWriteTestFailed;
         }
         strSafeCopy(writeDir.data(), writeDir.size(), std::string_view{finalPathStr});
-        return ConfigWarning::kNone;
+        return v1::ConfigWarning::kNone;
     } catch (...) {
-        return ConfigWarning::kInternalError;
+        return v1::ConfigWarning::kInternalError;
     }
 }
 
@@ -404,7 +404,7 @@ class TracedException : public std::exception {
 std::exception_ptr pendingException{nullptr};  // NOLINT
 std::mutex mutex;                              // NOLINT
 
-void saveException(std::string_view msg, const ObjectTrace* customTrace) noexcept {
+void saveException(std::string_view msg, const v1::ObjectTrace* customTrace) noexcept {
     std::lock_guard lock{mutex};
     cpptrace::object_trace trace;
     if (customTrace != nullptr) {
@@ -478,7 +478,7 @@ struct Config {
     static constexpr int kAlarmSeconds{5};
     struct TerminateSettings {
         bool enable{true};
-        std::optional<TerminateHook> userHook{std::nullopt};
+        std::optional<v1::TerminateHook> userHook{std::nullopt};
     };
     struct SignalSettings {
         bool enable{true};
@@ -509,13 +509,13 @@ struct Config {
     TerminateSettings terminate;
     PanicSettings panic;
 
-    [[nodiscard]] InitResult fromAPI(const ::fault::Config& config) noexcept {
-        InitResult result{.success = true, .warnings = ConfigWarning::kNone};
+    [[nodiscard]] v1::InitResult fromAPI(const ::fault::v1::Config& config) noexcept {
+        v1::InitResult result{.success = true, .warnings = v1::ConfigWarning::kNone};
         const auto baseErrorMsgToCopy =
             config.baseErrorMsg.empty() ? kDefaultErrorMessage : config.baseErrorMsg;
         if (utils::strSafeCopy(baseErrorMessage.data(), baseErrorMessage.size(),
                                baseErrorMsgToCopy) < config.baseErrorMsg.size()) {
-            result.warnings = result.warnings | ConfigWarning::kBaseErrMsgTruncated;
+            result.warnings = result.warnings | v1::ConfigWarning::kBaseErrMsgTruncated;
         }
         utils::strSafeCopy(appName.data(), appName.size(), config.appName);
         utils::strSafeCopy(buildID.data(), buildID.size(), config.buildID);
@@ -528,12 +528,12 @@ struct Config {
         if (config.generateMiniDumpWindows &&
             utils::setCrashWriteDir(config.crashDir, fileNameStr, Windows::dumpPath,
                                     config.prefixDateOnFilename, tmInfo,
-                                    ".dmp") == ConfigWarning::kNone) {
+                                    ".dmp") == v1::ConfigWarning::kNone) {
             Windows::canWriteDump = true;
         }
 #endif
         result.warnings = result.warnings | reportDirFlags;
-        if (reportDirFlags != ConfigWarning::kNone) {
+        if (reportDirFlags != v1::ConfigWarning::kNone) {
             result.success = false;
             return result;
         }
@@ -547,7 +547,7 @@ struct Config {
         terminate = TerminateSettings{
             .enable = config.terminate.enable,
             .userHook = config.terminate.userHook != nullptr
-                            ? std::optional<TerminateHook>(config.terminate.userHook)
+                            ? std::optional<v1::TerminateHook>(config.terminate.userHook)
                             : std::nullopt};
         panic = PanicSettings{.printMsgToStdErr = config.panic.printMsgToStdErr,
                               .showPopUp = config.panic.showPopUp,
@@ -1671,7 +1671,7 @@ struct TerminateHandling {
    private:
     static inline std::atomic<bool> hasBeenTriggered{
         false};  // Protection against multi threading calling std::terminate concurrently
-    static inline TerminateHook terminateHook{nullptr};
+    static inline v1::TerminateHook terminateHook{nullptr};
 
     [[nodiscard]] static bool shouldExecuteHandler() noexcept {
         bool expected{false};
@@ -1729,7 +1729,7 @@ struct TerminateHandling {
         checkCommonExceptions(userMessage, msgOffset, details, detailOffset, trace);
 
         if (TerminateHandling::terminateHook != nullptr) {
-            ObjectTrace faultTrace = adapter::from_cpptrace(trace);
+            v1::ObjectTrace faultTrace = adapter::v1::from_cpptrace(trace);
             TerminateHandling::terminateHook(std::string_view{userMessage.data(), msgOffset},
                                              faultTrace);
             trace = adapter::to_cpptrace(faultTrace);
@@ -1858,11 +1858,11 @@ void doInit() noexcept {
     setup(config.signal.enable, config.signal.enableShutdownRequest);
 }
 
-[[nodiscard]] InitResult tryInit(const Config& config) noexcept {
+[[nodiscard]] InitResult tryInit(const v1::Config& config) noexcept {
     static std::atomic<bool> isInit{false};
     bool expected{false};
     if (!isInit.compare_exchange_strong(expected, true)) {
-        return {.success = true, .warnings = ConfigWarning::kAlreadyInitialized};
+        return {.success = true, .warnings = v1::ConfigWarning::kAlreadyInitialized};
     }
     const auto res = _internal::config.fromAPI(config);
     if (!res) {
@@ -1886,20 +1886,35 @@ bool has_shutdown_request() noexcept {
     return shutdownRequest.load(std::memory_order_acquire);
 }
 
-void save_traced_exception(std::string_view msg, const ObjectTrace* customTrace) noexcept {
-    exceptions::saveException(msg, customTrace);
-}
-
 bool can_collect_safe_trace() noexcept {
     return cpptrace::can_signal_safe_unwind() && cpptrace::can_get_safe_object_frame();
 }
+
+bool has_saved_traced_exception() noexcept {
+    return exceptions::pendingException != nullptr;
+}
+
+#if FAULT_API_VERSION == 1
+inline
+#endif
+    namespace v1 {
+
+namespace {
+
+::FaultInitResultV1 fromCppInitResult(InitResult cppRes) noexcept {
+    return ::FaultInitResultV1{.success = cppRes.success,
+                               .warnings = static_cast<::FaultConfigWarningV1>(
+                                   static_cast<std::uint8_t>(cppRes.warnings))};
+}
+
+}  // namespace
 
 InitResult init(const Config& config) noexcept {
     return tryInit(config);
 }
 
-bool has_saved_traced_exception() noexcept {
-    return exceptions::pendingException != nullptr;
+void save_traced_exception(std::string_view msg, const ObjectTrace* customTrace) noexcept {
+    exceptions::saveException(msg, customTrace);
 }
 
 void panic_impl(std::string_view message, const ObjectTrace* customTrace) {
@@ -1964,11 +1979,7 @@ void panic_at(std::string_view expr, std::source_location loc, std::string_view 
     FAULT_UNREACHABLE();
 }
 
-::FaultInitResult fromCppInitResult(InitResult cppRes) noexcept {
-    return ::FaultInitResult{
-        .success = cppRes.success,
-        .warnings = static_cast<::FaultConfigWarning>(static_cast<std::uint8_t>(cppRes.warnings))};
-}
+}  // namespace v1
 
 }  // namespace fault
 
@@ -1978,9 +1989,9 @@ bool fault_can_collect_safe_trace() FAULT_NOEXCEPT {
     return fault::can_collect_safe_trace();
 }
 
-FaultConfig fault_get_default_config() FAULT_NOEXCEPT {
-    fault::Config config{};
-    return FaultConfig{
+FaultConfigV1 fault_get_default_config_v1() FAULT_NOEXCEPT {
+    fault::v1::Config config{};
+    return FaultConfigV1{
         .appName = config.appName.data(),
         .buildID = config.buildID.data(),
         .crashDir = config.crashDir.data(),
@@ -2001,12 +2012,12 @@ FaultConfig fault_get_default_config() FAULT_NOEXCEPT {
                   .writeReport = config.panic.writeReport}};
 }
 
-FaultInitResult fault_init(const FaultConfig* config) FAULT_NOEXCEPT {
+FaultInitResultV1 fault_init_v1(const FaultConfigV1* config) FAULT_NOEXCEPT {
     if (config == nullptr) {
-        return fault::fromCppInitResult(fault::tryInit(fault::Config{}));
+        return fault::v1::fromCppInitResult(fault::tryInit(fault::v1::Config{}));
     }
 
-    fault::Config cppConfig{
+    fault::v1::Config cppConfig{
         .appName{fault::utils::getSafeView(config->appName)},
         .buildID{fault::utils::getSafeView(config->buildID)},
         .crashDir{fault::utils::getSafeView(config->crashDir)},
@@ -2025,19 +2036,19 @@ FaultInitResult fault_init(const FaultConfig* config) FAULT_NOEXCEPT {
         .panic{.printMsgToStdErr = config->panic.printMsgToStdErr,
                .showPopUp = config->panic.showPopUp,
                .writeReport = config->panic.writeReport}};
-    return fault::fromCppInitResult(fault::tryInit(cppConfig));
+    return fault::v1::fromCppInitResult(fault::tryInit(cppConfig));
 }
 
-void fault_panic(const char* message) {
-    constexpr const fault::ObjectTrace* kNoExceptionTrace{nullptr};
-    fault::panic_impl(fault::utils::getSafeView(message), kNoExceptionTrace);
+void fault_panic_v1(const char* message) {
+    constexpr const fault::v1::ObjectTrace* kNoExceptionTrace{nullptr};
+    fault::v1::panic_impl(fault::utils::getSafeView(message), kNoExceptionTrace);
     FAULT_UNREACHABLE();
 }
 
-void fault_panic_at(const char* expr, const char* file, uint32_t line, const char* func,
-                    const char* userMsg) {
-    fault::panic_at(fault::utils::getSafeView(expr), fault::utils::getSafeView(file), line,
-                    fault::utils::getSafeView(func), fault::utils::getSafeView(userMsg));
+void fault_panic_at_v1(const char* expr, const char* file, uint32_t line, const char* func,
+                       const char* userMsg) {
+    fault::v1::panic_at(fault::utils::getSafeView(expr), fault::utils::getSafeView(file), line,
+                        fault::utils::getSafeView(func), fault::utils::getSafeView(userMsg));
     FAULT_UNREACHABLE();
 }
 

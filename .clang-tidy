@@ -7,6 +7,7 @@ Checks: >
   performance-*,
   portability-*,
   readability-*,
+  -performance-enum-size,
   -readability-magic-numbers,
   -readability-identifier-length,
   -readability-math-missing-parentheses,
@@ -36,4 +37,3 @@ CheckOptions:
   readability-identifier-naming.EnumConstantPrefix: k
   readability-identifier-naming.ConstexprVariableCase: CamelCase
   readability-identifier-naming.ConstexprVariablePrefix: k
-  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
