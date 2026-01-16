@@ -59,16 +59,29 @@
 #undef FAULT_EXPECT_AT_IMPL
 #undef FAULT_EXPECT_IMPL
 #undef FAULT_VERIFY_IMPL
+#undef FAULT_EXPECT_AT_IMPL_V1
+#undef FAULT_EXPECT_IMPL_V1
+#undef FAULT_VERIFY_IMPL_V1
 
-#define FAULT_EXPECT_AT_IMPL(cond, ...) \
-    ::fault::panic_at(#cond, std::source_location::current(), ##__VA_ARGS__)
+#define FAULT_EXPECT_AT_IMPL_V1(cond, ...) \
+    ::fault::v1::panic_at(#cond, std::source_location::current() __VA_OPT__(, ) __VA_ARGS__)
 
-#define FAULT_VERIFY_IMPL(cond, ...) ::fault::verify(false, ##__VA_ARGS__)
+#define FAULT_VERIFY_IMPL_V1(cond, ...) ::fault::v1::panic(__VA_ARGS__)
 
 #if FAULT_USE_LOCATIONS
-#define FAULT_EXPECT_IMPL(cond, ...) FAULT_EXPECT_AT_IMPL(cond, ##__VA_ARGS__)
+#define FAULT_EXPECT_IMPL_V1(cond, ...) FAULT_EXPECT_AT_IMPL_V1(cond __VA_OPT__(, ) __VA_ARGS__)
 #else
-#define FAULT_EXPECT_IMPL(cond, ...) FAULT_VERIFY_IMPL(false, ##__VA_ARGS__)
+#define FAULT_EXPECT_IMPL_V1(cond, ...) FAULT_VERIFY_IMPL_V1(false __VA_OPT__(, ) __VA_ARGS__)
+#endif
+
+#if FAULT_API_VERSION == 1
+#define FAULT_VERIFY_IMPL FAULT_VERIFY_IMPL_V1
+#define FAULT_EXPECT_AT_IMPL FAULT_EXPECT_AT_IMPL_V1
+#define FAULT_EXPECT_IMPL FAULT_EXPECT_IMPL_V1
+#else
+#define FAULT_VERIFY_IMPL
+#define FAULT_EXPECT_AT_IMPL
+#define FAULT_EXPECT_IMPL
 #endif
 
 #include <cstdint>
@@ -89,6 +102,17 @@ constexpr std::string_view kDefaultErrorMessage{
     "The application encountered a fatal error and must close. If the problem "
     "persists, please "
     "contact the program maintainer."};
+
+/**
+ * @brief Returns wether fault has a saved exception from fault::save_traced_exception.
+ *
+ */
+FAULT_NODISCARD FAULT_EXPORT bool has_saved_traced_exception() noexcept;
+
+#if FAULT_API_VERSION == 1
+inline
+#endif
+    namespace v1 {
 
 struct FAULT_EXPORT Frame {
     std::uintptr_t rawAddress{};
@@ -127,8 +151,8 @@ struct FAULT_EXPORT Config {
             true};  // Raises default signal after handling it. Only relevant on linux. For non
                     // posix signals (terminate handler, panic and assert failures), SIGABRT is
                     // raised instead.
-        bool storeShutdownRequests{true};  // Registers SIGINT & SIGTERM to store shutdown request
-                                           // (no action is actually taken)
+        bool storeShutdownRequests{true};  // Registers SIGINT & SIGTERM to store shutdown
+                                           // request (no action is actually taken)
     };
     struct PanicSettings {
         bool printMsgToStdErr{true};
@@ -172,37 +196,16 @@ struct InitResult {
 FAULT_EXPORT InitResult init(const Config& config = {}) noexcept;
 
 /**
- * @brief Stores shutdown request
- *
- * @return returning wether this is the first request made.
- */
-FAULT_EXPORT bool set_shutdown_request() noexcept;
-
-/**
- * @brief Returns wether any shutdown request has been made.
- *
- */
-FAULT_NODISCARD FAULT_EXPORT bool has_shutdown_request() noexcept;
-
-/**
  * @brief Saves a traced exception, which will later automatically be appended on panic or
  * std::terminate handling.
- * Example: Save a traced exception from a thread, signal main thread with shutdown request, main
- * thread does cleanup and panics if exception is saved
+ * Example: Save a traced exception from a thread, signal main thread with shutdown request,
+ * main thread does cleanup and panics if exception is saved
  *
  * @note Thread-safe
  * @note Not async-signal-safe (implied)
  */
 FAULT_EXPORT void save_traced_exception(std::string_view msg,
                                         const ObjectTrace* customTrace = nullptr) noexcept;
-
-/**
- * @brief Returns wether a signal safe object trace can be collected. If false and option to
- * collect regular trace is not selected, then no trace will be attempted on signal handlers or
- * Windows exception handlers
- *
- */
-FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
 
 /**
  * @brief panic implementation
@@ -216,8 +219,8 @@ FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
 /**
  * @brief Use this to immediately shutdown the application and perform similar actions as the
  * fault handlers, such as printing error message to stderr, displaying a fatal popup and write
- * report with metadata and object trace. On Linux, default abort is raised afterwards, whereas on
- * Windows, if set, a minidump is generated before terminating the process.
+ * report with metadata and object trace. On Linux, default abort is raised afterwards, whereas
+ * on Windows, if set, a minidump is generated before terminating the process.
  *
  * @param message message to be displayed on report, stderr and popup
  *
@@ -228,15 +231,9 @@ FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
 }
 
 /**
- * @brief Returns wether fault has a saved exception from fault::save_traced_exception.
- *
- */
-FAULT_NODISCARD FAULT_EXPORT bool has_saved_traced_exception() noexcept;
-
-/**
  * @brief panics if any exception was saved via fault::save_traced_exception.
- * @note for higher customization, user may instead check fault::has_saved_traced_exception, and if
- * so explicitly panic with one of its overloads
+ * @note for higher customization, user may instead check fault::has_saved_traced_exception, and
+ * if so explicitly panic with one of its overloads
  *
  */
 inline void panic_if_has_saved_exception(std::string_view message = {}) noexcept {
@@ -294,8 +291,8 @@ template <typename MsgFn>
 
 /**
  * @brief Verify invariant. In case of failure, performs panic shutdown, writing object traced
- * report, visual popup and terminal summary, depending on panic settings. Available on all build
- * modes.
+ * report, visual popup and terminal summary, depending on panic settings. Available on all
+ * build modes.
  *
  * @param cond condition to verify
  * @param userMsg user message to be displayed & logged
@@ -417,6 +414,29 @@ inline void expect(bool cond, MsgFn&& msgFn
 #endif
     }
 }
+
+}  // namespace v1
+
+/**
+ * @brief Stores shutdown request
+ *
+ * @return returning wether this is the first request made.
+ */
+FAULT_EXPORT bool set_shutdown_request() noexcept;
+
+/**
+ * @brief Returns wether any shutdown request has been made.
+ *
+ */
+FAULT_NODISCARD FAULT_EXPORT bool has_shutdown_request() noexcept;
+
+/**
+ * @brief Returns wether a signal safe object trace can be collected. If false and option to
+ * collect regular trace is not selected, then no trace will be attempted on signal handlers or
+ * Windows exception handlers
+ *
+ */
+FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
 
 }  // namespace fault
 

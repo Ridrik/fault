@@ -1,6 +1,10 @@
 #ifndef FAULT_CONFIG_H
 #define FAULT_CONFIG_H
 
+#ifndef FAULT_API_VERSION  // Not needed now, will be useful once new versions are introduced
+#define FAULT_API_VERSION 1
+#endif
+
 // --- Location Metadata Configuration ---
 #if defined(FAULT_ENABLE_LOCATIONS) && defined(FAULT_DISABLE_LOCATIONS)
 #error "Conflicting Fault configurations: Both ON and OFF locations forced!"

@@ -6,7 +6,12 @@
 #include <cpptrace/basic.hpp>
 #include <fault/core.hpp>
 
-namespace fault::adapter {
+namespace fault::adapter {  // NOLINT(modernize-concat-nested-namespaces)
+
+#if FAULT_API_VERSION == 1
+inline
+#endif
+    namespace v1 {
 
 [[nodiscard]] inline ObjectTrace from_cpptrace(const cpptrace::object_trace& cppTrace) {
     ObjectTrace trace;
@@ -29,6 +34,8 @@ namespace fault::adapter {
     }
     return cppTrace;
 }
+
+}  // namespace v1
 
 }  // namespace fault::adapter
 

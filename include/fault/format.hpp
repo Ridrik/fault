@@ -5,7 +5,12 @@
 
 #include <fault/core.hpp>
 
-namespace fault {
+namespace fault {  // NOLINT(modernize-concat-nested-namespaces)
+
+#if FAULT_API_VERSION == 1
+inline
+#endif
+    namespace v1 {
 
 template <typename... Args>
 FAULT_NORETURN inline void panic(std::format_string<Args...> fmt, Args&&... args) {
@@ -84,6 +89,8 @@ inline void expect(bool cond, std::format_string<Args...> fmt, Args&&... args) {
     }
 }
 #endif
+
+}  // namespace v1
 
 }  // namespace fault
 
