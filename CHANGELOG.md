@@ -1,3 +1,7 @@
+## v0.2.0 - January 2026
+### Added
+- API Versioning system - version namespaces (c++), typedef alias (C header). Currently at v1. No actual implementation changes. (**Note**: if new versions are designed, users will have the option to revert to previous versions using FAULT_API_VERSION macro option, that controls which collection defaults to main fault:: namespace or C-based functions & types)
+
 ## v0.1.3 - January 2026
 ### Updated
 - Fix related with typo in uptime calculation in fault report & popup
