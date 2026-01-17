@@ -19,6 +19,10 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 
+if(MSVC)
+    add_compile_options(/Zc:preprocessor) # __VA_OPT__
+endif()
+
 set(FAULT_SOURCES
     "src/fault.cpp"
     "include/fault/fault.hpp"

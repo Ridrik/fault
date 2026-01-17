@@ -67,8 +67,6 @@ static_assert(std::atomic<int>::is_always_lock_free,
               "std::atomic<int> may not be lock free. Use volatile std::sig_atomic_t "
               "instead.");
 
-#define FORCE_INLINE inline __attribute__((always_inline))
-
 inline std::string_view getSafeView(const char* ptr) noexcept {
     if (ptr == nullptr) {
         return "";
@@ -499,7 +497,8 @@ struct Config {
         "contact the program maintainer."};
     std::array<char, 128> appName{};
     std::array<char, 128> buildID{};
-    std::array<char, 512> crashPath{"crash_report.log"};
+    static constexpr std::size_t kCrashPathSize{512};
+    std::array<char, kCrashPathSize> crashPath{"crash_report.log"};
     std::atomic<bool> isReportWritable{true};
     bool showPopUp{true};
     bool printMsgToStdErr{true};
@@ -572,7 +571,13 @@ std::array<char, 256> kDialogPath{"/usr/bin/kdialog"};  // NOLINT
 std::atomic<int> canReadKDialogPath{1};                 // NOLINT
 #endif
 
-[[noreturn]] FORCE_INLINE void shutdown(int code = EXIT_FAILURE) noexcept {
+#if defined(_MSC_VER)
+#define FAULT_FORCE_INLINE __forceinline
+#else
+#define FAULT_FORCE_INLINE __attribute__((always_inline)) inline
+#endif
+
+[[noreturn]] FAULT_FORCE_INLINE void shutdown(int code = EXIT_FAILURE) noexcept {
 #ifdef _WIN32
     TerminateProcess(GetCurrentProcess(), code);
 #else
@@ -621,7 +626,7 @@ bool writeReport(std::string_view errContext,
     const int fd = open(config.crashPath.data(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd == -1) {
 #else
-    std::array<wchar_t, config.crashPath.size()> crashPathWide{};
+    std::array<wchar_t, _internal::Config::kCrashPathSize> crashPathWide{};
     const HANDLE fd = utils::utf8ToUtf16Stack(config.crashPath.data(), crashPathWide.data(),
                                               crashPathWide.size())
                           ? CreateFileW(crashPathWide.data(),  // File name
