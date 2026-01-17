@@ -415,7 +415,7 @@ void saveException(std::string_view msg, const v1::ObjectTrace* customTrace) noe
         }
     }
     pendingException = std::make_exception_ptr(
-        TracedException{!msg.empty() ? std::string{msg} : "Unspecified", std::move(trace)});
+        TracedException{!msg.empty() ? std::string{msg} : "<Unspecified>", std::move(trace)});
 }
 
 std::optional<std::string> rethrowAndAppendSavedExceptionTrace(
@@ -1982,6 +1982,49 @@ void panic_at(std::string_view expr, std::string_view file, std::uint32_t line,
 void panic_at(std::string_view expr, std::source_location loc, std::string_view userMsg) {
     panic_at(expr, loc.file_name(), loc.line(), loc.function_name(), userMsg);
     FAULT_UNREACHABLE();
+}
+
+void try_catch(std::function<void()> body, CatchPolicy catchPolicy,
+               std::function<std::string(std::exception_ptr ep, const ObjectTrace& trace)>
+                   onException) noexcept {
+    bool onExceptionCalled{
+        false};  // cpptrace actually recursively wraps lambda pairs until a remaining pair exist,
+                 // meaning that for the 3 current callables, unwind interceptor will be in place
+                 // twice, and it's possible for both catch callables to be called in an edge case
+                 // scenario where the first catch also throws. Therefore, this is to protect
+                 // against the user callback being called twice.
+
+    const auto kOnCatch = [&onException, &onExceptionCalled,
+                           catchPolicy](std::string_view msg = "") {
+        const auto objectTrace = fault::adapter::from_cpptrace(
+            cpptrace::raw_trace_from_current_exception().resolve_object_trace());
+        auto effectiveMsg = msg;
+        std::string userMsg;
+        if (!onExceptionCalled && onException != nullptr) {
+            onExceptionCalled = true;
+            userMsg = onException(std::current_exception(), objectTrace);
+            if (!userMsg.empty()) {
+                effectiveMsg = userMsg;
+            }
+        }
+        switch (catchPolicy) {
+            case CatchPolicy::kPanic: {
+                panic(objectTrace, effectiveMsg);
+                FAULT_UNREACHABLE();
+            }
+            case CatchPolicy::kSaveExceptionWithShutdownRequest: {
+                save_traced_exception(effectiveMsg, &objectTrace);
+                set_shutdown_request();
+                return;
+            }
+            case CatchPolicy::kNothing:
+                return;
+        }
+    };
+
+    cpptrace::try_catch(
+        std::move(body), [&kOnCatch](const std::exception& e) { kOnCatch(e.what()); },
+        [&kOnCatch]() { kOnCatch(); });
 }
 
 }  // namespace v1

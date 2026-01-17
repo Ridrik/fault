@@ -85,6 +85,7 @@
 #endif
 
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <source_location>
 #include <string>
@@ -414,6 +415,36 @@ inline void expect(bool cond, MsgFn&& msgFn
 #endif
     }
 }
+
+enum class CatchPolicy : std::uint8_t { kPanic, kSaveExceptionWithShutdownRequest, kNothing };
+
+/**
+ * @brief Wraps and invokes body within a try/catch with default catch blocks: 'const
+ * std::exception&' and 'catch all'. If any of these blocks is reached, executes onException, if
+ * any, followed by a given policy: panic (@see fault::panic) - in which case it is [[noreturn]]; or
+ * saves exception and signals for shutdown (@see fault::has_shutdown_request), returning
+ * afterwards; or does nothing and returns.
+ *
+ * The try/catch block uses cpptrace unwind interceptor, meaning that either policy will
+ * automatically contain traces from the current exception (i.e containing the thrown context)
+ *
+ * @note onException callback contains the exception pointer, which users may use to retrieve
+ * suspected exception types, similarly to if they had done the original try/catch themselves. It
+ * returns a std::string, which, if non-empty, will be forwarded to fault::panic or to the saved
+ * trace message, depending on the policy. If empty, it uses default no-op or std::exception
+ * message, whichever block was hit.
+ * @note Use this when you want to have traces from exceptions without depending on cpptrace
+ * directly.
+ *
+ * @param body Function to be invocked
+ * @param catchPolicy policy to execute on catch event
+ * @param onException optional callback to execute on catch event, before the policy is executed. If
+ * the return value is non-empty, it is used as panic or saved exception message.
+ */
+FAULT_EXPORT void try_catch(
+    std::function<void()> body, CatchPolicy catchPolicy,
+    std::function<std::string(std::exception_ptr ep, const ObjectTrace& trace)> onException =
+        nullptr) noexcept;
 
 }  // namespace v1
 
