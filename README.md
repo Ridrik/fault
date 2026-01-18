@@ -26,6 +26,7 @@ When a C++ application crashes, the default behavior is often a silent exit or a
 * [Utilities](#utilities)
 * [Headers](#headers)
 * [Author's Note](#authors-note)
+* [Practical example](#practical-example)
 * [Third party components](#-third-party-components-and-licenses)
 * [License](#license)
 
@@ -596,6 +597,99 @@ Lastly, `fault` provides a modern framework for `panic` based commands and asser
 [↑ Back to Top](#fault)
 
 ---
+
+## Practical example
+
+Below is a possible practical example for c++ consumers, where `fault` covers everything from signal faults, std::terminate, throw/catch with traces from exception, and custom panic and assertions.
+
+```cpp
+#include <thread>
+#include <iostream>
+#include <stdexception>
+#include <format>
+
+#include <fault/fault.hpp>
+
+void App::startSim() {
+    thread_ = std::make_unique<std::thread>([this] {
+        fault::try_catch([this]{
+            status_ = Status::kRunning;
+            // Do simulation logic
+            FAULT_ASSERT(speed > 0, "Got invalid speed {}", speed);
+            FAULT_ASSERT(region_.contains(position), [this] {
+                log("{}, {}, {}, {}, {}, {}", timestamp, utils::regionToStr(region_), position, velocity, aceleration, drag);
+                return std::format("Region {} does not contain position {} at {}", utils::regionToStr(region_), position, timestamp);
+            });
+        }, fault::CatchPolicy::kSaveExceptionWithShutdownRequest, [this](std::exception_ptr /*ep*/, const fault::ObjectTrace& /*trace*/) {
+            status_ = Status::kStopped;
+            log("Caught exception on simulation");
+            return "";
+        });
+    });
+}
+
+void App::run() {
+    while (!fault::has_shutdown_request() && !windowShouldClose) {
+        if (shouldStartSim()) {
+            startSim();
+        }
+        checkGUI();
+        drawFrame();
+        renderFrame();
+        // .... 
+    }
+}
+
+
+int main() {
+    if (!fault::init({.appName = "MyApp",
+                      .buildID = "MyBuildID",
+                      .crashDir = "crash",
+                      .useUnsafeStacktraceOnSignalFallback = true,
+                      .generateMiniDumpWindows = true})) {
+        std::cerr << "Failed to initialize fault.\n";
+        return EXIT_FAILURE;
+    }
+
+    int status{EXIT_FAILURE};
+    fault::try_catch([&status] {
+        // Here goes your app
+        Context context;
+        App myApp{context};
+        myApp.run();
+        fault::panic_if_has_saved_exception();
+        status = EXIT_SUCCESS;
+    }, fault::CatchPolicy::kPanic,
+     [](std::exception_ptr ep, const fault::ObjectTrace& /*trace*/) -> std::string {
+        try {   
+            if (ep == nullptr) {
+                return "";
+            }
+            std::rethrow_exception(ep);
+        } catch (const MyInitializationException& e) {
+            // Log something
+        } catch (const MyLogicException& e) {
+            const auto logicType = e.type();
+            std::cerr << "Caught logic exception of type" << utils::typeToStr(logicType) << '\n';
+            return std::format("Logic error of type: {}", utils::typeToStr(logicType));
+        } catch (const std::exception& e) {
+            return e.what();
+        } catch (...) {
+            return "";
+        }
+        return "";
+    });
+
+    return status;
+}
+
+```
+
+
+[↑ Back to Top](#fault)
+
+---
+
 
 ## 🧩 Third-Party Components and Licenses
 `fault` uses `cpptrace` as driving mechanism to collect object traces smoothly across both platforms, and, whenever applicable, signal safe traces. See `LICENSE_3RD_PARTY` for the explicit component License.
