@@ -1,3 +1,4 @@
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 #include <thread>
@@ -10,6 +11,8 @@
 #include <cpptrace/basic.hpp>
 #include <cpptrace/cpptrace.hpp>
 #include <cpptrace/from_current.hpp>
+
+#include "fault/core.hpp"
 
 namespace {
 
@@ -54,6 +57,7 @@ int add(int a, int b) {
 }  // namespace
 
 void foo() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
     throw std::runtime_error("Shouldn't have happened");
 }
 
@@ -68,20 +72,23 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    try {
-        foo();
-    } catch (const std::exception& e) {
-        fault::panic("Exception caught: {}", e.what());
+    std::thread([]() {
+        fault::try_catch(foo, fault::CatchPolicy::kPanic,
+                         [](std::exception_ptr ep, const fault::ObjectTrace& trace) -> std::string {
+                             return std::string("kekekers");
+                         });
+    }).detach();
+
+    const auto now = std::chrono::steady_clock::now();
+    while (!fault::has_shutdown_request()) {
     }
 
-    // Overriding traces
-    cpptrace::try_catch([] { foo(); },
-                        [](const std::exception& e) {
-                            const auto cppObjectTrace =
-                                cpptrace::raw_trace_from_current_exception().resolve_object_trace();
-                            const auto objectTrace = fault::adapter::from_cpptrace(cppObjectTrace);
-                            fault::panic(objectTrace, "Exception caught: {}", e.what());
-                        });
+    fault::panic_if_has_saved_exception(std::format(
+        "Hit after {} milliseconds", std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - now)
+                                         .count()));
+
+    fault::panic("LOL");
 
     const auto result = add(5, 2);
 
