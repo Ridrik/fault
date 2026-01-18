@@ -254,7 +254,7 @@ BOOST_AUTO_TEST_CASE(ExecuteTestCases) {
                 BOOST_CHECK_EQUAL(static_cast<unsigned int>(exitCode),
                                   static_cast<unsigned int>(faultToCode(test.fault)));
 #else
-                BOOST_CHECK_EQUAL(exitCode, test.expectedCode);
+                BOOST_CHECK_EQUAL(exitCode, faultToCode(test.fault));
 #endif
                 if (!checkCommonErrMessage(errData)) {
                     BOOST_FAIL("stderr common evaluation failed. Captured " << errData);

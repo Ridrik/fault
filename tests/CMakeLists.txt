@@ -39,7 +39,7 @@ add_test_executable(test_c_api test_c_api.c)
 
 
 # ====== Crash Target ======
-find_package(Boost 1.88 REQUIRED COMPONENTS asio system filesystem process program_options unit_test_framework)
+find_package(Boost 1.88 REQUIRED COMPONENTS system filesystem process program_options unit_test_framework)
 add_test_executable(crash_target crash_target.cpp)
 target_link_libraries(crash_target PRIVATE Boost::program_options)
 target_compile_definitions(crash_target PRIVATE 
