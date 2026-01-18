@@ -416,7 +416,7 @@ inline void expect(bool cond, MsgFn&& msgFn
     }
 }
 
-enum class CatchPolicy : std::uint8_t { kPanic, kSaveExceptionWithShutdownRequest, kNothing };
+enum class CatchPolicy : std::uint8_t { kNothing, kPanic, kSaveExceptionWithShutdownRequest };
 
 /**
  * @brief Wraps and invokes body within a try/catch with default catch blocks: 'const

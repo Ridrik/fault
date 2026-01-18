@@ -1,3 +1,63 @@
+## v0.3.0 - January 2026
+### Added
+- Added explicit integration tests (in progress)
+- fault::try_catch: a try/catch wrapper that uses `cpptrace` unwind interceptor, automatically storing traces from exceptions and executing a given `fault` catch policy, namely: calling `fault::panic` (no return); saving a traced exception and signaling for shutdown; or returning with no action. An onException callback is invoked before the policy is enacted, containing the exception pointer, and allowing users to perform any custom actions in it, including retrieving exception types given the `std::exception_ptr`, as well as returning a message that will be displayed for the description of the following `fault::panic` or saved exception trace, if any.
+This change allows users to use the full capabilities of `fault` while utilizing the core exception features of `cpptrace`, but in an automatic way such that the consumer does not need to directly refer to `cpptrace`. Example:
+
+```cpp
+void foo() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    throw std::runtime_error("Shouldn't have happened");
+}
+
+int main() {
+    // Initialize global crash handlers (Signals, SEH, and Terminate)
+    if (!fault::init({.appName = "MyApp",
+                      .buildID = "MyBuildID",
+                      .crashDir = "crash",
+                      .useUnsafeStacktraceOnSignalFallback = true,
+                      .generateMiniDumpWindows = true})) {
+        std::cerr << "Failed to initialize fault.\n";
+        return EXIT_FAILURE;
+    }
+    // Example 1 -> execute your software, panicking if an exception triggers (which displays popup, message, and generates report),
+    // Automatically logs a trace from exception (thrown context)
+    fault::try_catch(foo, fault::CatchPolicy::kPanic);
+    // Example 2 -> user provided callback
+    fault::try_catch(foo, fault::CatchPolicy::kPanic,
+                     [](std::exception_ptr ep, const fault::ObjectTrace& trace) -> std::string {
+                         // You may want to analyze what exception was thrown, like you would if
+                         // setting up try/catch yourself
+                         try {
+                             if (ep == nullptr) {
+                                 return "";
+                             }
+                             std::rethrow_exception(ep);
+                         } catch (const MyException& e) {
+                             log_to_my_file(e.what());
+                             return e.what();
+                         } catch (const My2ndException& e) {
+                             // ....
+                         }
+                         // etc. etc.
+                     });
+    // Example 3 -> deferred saving
+    // Launch some thread (e.g your simulation)
+    std::thread([]() {
+        fault::try_catch(foo, fault::CatchPolicy::kSaveExceptionWithShutdownRequest);
+    }).detach();
+    // Main thread (could be your gui app)
+    const auto now = std::chrono::steady_clock::now();
+    while (!fault::has_shutdown_request()) {
+        // Execute your app logic
+    }
+    fault::panic_if_has_saved_exception(std::format(
+        "Hit after {} milliseconds", std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - now)
+                                         .count()));
+}
+```
+
 ## v0.2.1 - January 2026
 ### Updated
 - Fixed compilation for MSVC - it should work reliably now.
