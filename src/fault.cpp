@@ -1953,7 +1953,7 @@ void panic_impl(std::string_view message, const ObjectTrace* customTrace) {
 
 void panic_at(std::string_view expr, std::string_view file, std::uint32_t line,
               std::string_view func, std::string_view userMsg) {
-    std::array<char, 2048> msg{};
+    std::array<char, 1024> msg{};
     std::size_t offset{0};
     utils::safeAppend(msg.data(), offset, msg.size(), "Assertion failed");
     if (!expr.empty()) {
@@ -2020,6 +2020,7 @@ void try_catch(std::function<void()> body, CatchPolicy catchPolicy,
             case CatchPolicy::kNothing:
                 return;
         }
+        FAULT_UNREACHABLE();
     };
 
     cpptrace::try_catch(
