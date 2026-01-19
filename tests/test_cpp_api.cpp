@@ -72,12 +72,7 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    std::thread([]() {
-        fault::try_catch(foo, fault::CatchPolicy::kPanic,
-                         [](std::exception_ptr ep, const fault::ObjectTrace& trace) -> std::string {
-                             return std::string("kekekers");
-                         });
-    }).detach();
+    std::thread([]() { fault::try_catch(foo, fault::CatchPolicy::kPanic); }).detach();
 
     const auto now = std::chrono::steady_clock::now();
     while (!fault::has_shutdown_request()) {
@@ -87,8 +82,6 @@ int main() {
         "Hit after {} milliseconds", std::chrono::duration_cast<std::chrono::milliseconds>(
                                          std::chrono::steady_clock::now() - now)
                                          .count()));
-
-    fault::panic("LOL");
 
     const auto result = add(5, 2);
 
