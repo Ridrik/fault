@@ -1,3 +1,7 @@
+## v0.3.1 - January 2026
+### Added
+- Added soname and sym_link to library generation
+
 ## v0.3.0 - January 2026
 ### Added
 - Added explicit integration tests (in progress)
