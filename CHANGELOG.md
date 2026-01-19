@@ -1,3 +1,8 @@
+## v0.3.2 - January 2026
+### Updated
+- Small edge case fix when getting a trace from current exception that could throw if a resolved trace had been called by the user before.
+- Internal: better code intent on getting traces with fallbacks.
+
 ## v0.3.1 - January 2026
 ### Added
 - Added soname and sym_link to library generation

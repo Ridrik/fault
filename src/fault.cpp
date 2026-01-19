@@ -373,6 +373,20 @@ v1::ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fil
     }
 }
 
+[[nodiscard]] std::optional<cpptrace::object_trace> tryGetObjectTraceFromException() noexcept {
+    // Strangely, this throws if a resolved trace from exception has been called from user
+    // beforehand
+    try {
+        auto trace = cpptrace::raw_trace_from_current_exception().resolve_object_trace();
+        if (trace.frames.empty()) {
+            return std::nullopt;
+        }
+        return trace;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
 }  // namespace
 
 }  // namespace utils
@@ -404,16 +418,10 @@ std::mutex mutex;                              // NOLINT
 
 void saveException(std::string_view msg, const v1::ObjectTrace* customTrace) noexcept {
     std::lock_guard lock{mutex};
-    cpptrace::object_trace trace;
-    if (customTrace != nullptr) {
-        trace = adapter::to_cpptrace(*customTrace);
-    } else {
-        trace = cpptrace::raw_trace_from_current_exception().resolve_object_trace();
-        if (trace.frames.empty()) {
-            // User isn't using cpptrace interceptor, use normal trace
-            trace = cpptrace::generate_object_trace();
-        }
-    }
+    cpptrace::object_trace trace =
+        customTrace != nullptr
+            ? adapter::to_cpptrace(*customTrace)
+            : utils::tryGetObjectTraceFromException().value_or(cpptrace::generate_object_trace());
     pendingException = std::make_exception_ptr(
         TracedException{!msg.empty() ? std::string{msg} : "<Unspecified>", std::move(trace)});
 }
@@ -1763,10 +1771,10 @@ struct TerminateHandling {
                 "Note: Stack unwinding was in progress when std::terminate was called "
                 "(std::uncaught_exceptions = {}).\n",
                 uncaughtExp);
-            auto exceptionTrace =
-                cpptrace::raw_trace_from_current_exception().resolve_object_trace();
-            if (!exceptionTrace.frames.empty()) {  // Will only exist when cpptrace intercepted it
-                                                   // (implies consumer uses cpptrace try/catch)
+            if (auto optExceptionTrace = utils::tryGetObjectTraceFromException();
+                optExceptionTrace.has_value()) {  // Will only exist when cpptrace intercepted it
+                                                  // (implies consumer uses cpptrace try/catch)
+                auto& exceptionTrace = *optExceptionTrace;
                 trace.frames.push_back(
                     cpptrace::object_frame{.raw_address = 0,
                                            .object_address = 0,
@@ -1780,8 +1788,8 @@ struct TerminateHandling {
                     "UPSTREAM ======' artifitial frame.\n");
             }
         }
-        const auto optRethrowStr = exceptions::rethrowAndAppendSavedExceptionTrace(trace);
-        if (optRethrowStr.has_value()) {
+        if (const auto optRethrowStr = exceptions::rethrowAndAppendSavedExceptionTrace(trace);
+            optRethrowStr.has_value()) {
             const auto& str = *optRethrowStr;
             if (!str.empty()) {
                 utils::safeAppendFmt(msg.data(), msgOffset, msg.size(),
@@ -1923,12 +1931,9 @@ void save_traced_exception(std::string_view msg, const ObjectTrace* customTrace)
 }
 
 void panic_impl(std::string_view message, const ObjectTrace* customTrace) {
-    cpptrace::object_trace cppObjTrace{};
-    if (customTrace != nullptr) {
-        cppObjTrace = adapter::to_cpptrace(*customTrace);
-    } else {
-        cppObjTrace = cpptrace::generate_object_trace();
-    }
+    cpptrace::object_trace cppObjTrace = customTrace == nullptr
+                                             ? cpptrace::generate_object_trace()
+                                             : adapter::to_cpptrace(*customTrace);
     std::array<char, 1024> msgBuffer{};
     std::size_t msgOffset{0};
     std::array<char, 1024> detailBuffer{};
@@ -1997,7 +2002,7 @@ void try_catch(std::function<void()> body, CatchPolicy catchPolicy,
     const auto kOnCatch = [&onException, &onExceptionCalled,
                            catchPolicy](std::string_view msg = "") {
         const auto objectTrace = fault::adapter::from_cpptrace(
-            cpptrace::raw_trace_from_current_exception().resolve_object_trace());
+            utils::tryGetObjectTraceFromException().value_or(cpptrace::generate_object_trace()));
         auto effectiveMsg = msg;
         std::string userMsg;
         if (!onExceptionCalled && onException != nullptr) {
