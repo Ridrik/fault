@@ -14,4 +14,13 @@ FetchContent_Declare(
   GIT_TAG        ${FAULT_CPPTRACE_TAG} 
 )
 FetchContent_MakeAvailable(cpptrace)
+
+get_target_property(real_cpptrace cpptrace::cpptrace ALIASED_TARGET)
+
+# cpptrace does not support -fno-exceptions
+target_compile_options(${real_cpptrace} PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fexceptions>
+    $<$<CXX_COMPILER_ID:MSVC>:/EHsc>
+)
+
 set(CMAKE_CXX_SCAN_FOR_MODULES ${PREV_SCAN_SETTING})

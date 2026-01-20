@@ -59,9 +59,11 @@
 #undef FAULT_EXPECT_AT_IMPL
 #undef FAULT_EXPECT_IMPL
 #undef FAULT_VERIFY_IMPL
+#undef FAULT_DEBUG_GUARD
 #undef FAULT_EXPECT_AT_IMPL_V1
 #undef FAULT_EXPECT_IMPL_V1
 #undef FAULT_VERIFY_IMPL_V1
+#undef FAULT_DEBUG_GUARD_V1
 
 #define FAULT_EXPECT_AT_IMPL_V1(cond, ...) \
     ::fault::v1::panic_at(#cond, std::source_location::current() __VA_OPT__(, ) __VA_ARGS__)
@@ -75,21 +77,21 @@
 #endif
 
 #if FAULT_ASSERT_ACTIVE
-#define FAULT_PANIC_GUARD_V1(hook) fault::v1::PanicGuard(hook)
+#define FAULT_DEBUG_GUARD_V1(hook) fault::v1::PanicGuard(hook)
 #else
-#define FAULT_PANIC_GUARD_V1(hook) ((void)0)
+#define FAULT_DEBUG_GUARD_V1(hook) ((void)0)
 #endif
 
 #if FAULT_API_VERSION == 1
 #define FAULT_VERIFY_IMPL FAULT_VERIFY_IMPL_V1
 #define FAULT_EXPECT_AT_IMPL FAULT_EXPECT_AT_IMPL_V1
 #define FAULT_EXPECT_IMPL FAULT_EXPECT_IMPL_V1
-#define FAULT_PANIC_GUARD FAULT_PANIC_GUARD_V1
+#define FAULT_DEBUG_GUARD FAULT_DEBUG_GUARD_V1
 #else
 #define FAULT_VERIFY_IMPL
 #define FAULT_EXPECT_AT_IMPL
 #define FAULT_EXPECT_IMPL
-#define FAULT_PANIC_GUARD
+#define FAULT_DEBUG_GUARD
 #endif
 
 #include <cstdint>
@@ -197,8 +199,22 @@ using PanicHook = std::function<std::string()>;
 
 enum class HookScope : std::uint8_t { kThreadLocal, kGlobal };
 
+/**
+ * @brief Provides a wrapper for user callback in RAII-style mechanism, to be evoked if a panic
+ * (including assertion failures) or std::terminate is called while this object is alive. The
+ * callback returns a string, which will be appended to the details section of the report. The
+ * callback is automatically deregistered once the guard goes out of scope, or if user explicitly
+ * releases it.
+ *
+ */
 struct FAULT_EXPORT PanicGuard {
    public:
+    /**
+     * @brief Construct a new Panic Guard object
+     *
+     * @param callback callback to be evoked on fault::panic or terminate (if installed)
+     * @param scope scope in which it should be evoked. Defaults to thread local
+     */
     explicit PanicGuard(PanicHook callback, HookScope scope = HookScope::kThreadLocal);
     ~PanicGuard();
     PanicGuard(const PanicGuard&) = delete;
@@ -206,6 +222,10 @@ struct FAULT_EXPORT PanicGuard {
     PanicGuard(PanicGuard&&) = delete;
     PanicGuard& operator=(PanicGuard&&) = delete;
 
+    /**
+     * @brief releases the guard's callback from registry, deactivating the guard as well
+     *
+     */
     void release() noexcept;
 
    private:

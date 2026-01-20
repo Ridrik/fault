@@ -32,9 +32,15 @@ function(add_test_executable name source_file)
     endif()
 endfunction()
 
+add_compile_options(
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fexceptions>
+    $<$<CXX_COMPILER_ID:MSVC>:/EHsc>
+)
+
 # ====== Dummy tests (practice area) =======
 add_test_executable(test_cpp_api test_cpp_api.cpp)
 add_test_executable(test_cpp_api_2 test_cpp_api_2.cpp)
+add_test_executable(test_hook_guard test_hook_guard.cpp)
 add_test_executable(test_c_api test_c_api.c)
 
 

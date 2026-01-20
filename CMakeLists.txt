@@ -109,6 +109,14 @@ endif()
 include(GenerateExportHeader)
 generate_export_header(fault BASE_NAME FAULT EXPORT_FILE_NAME include/fault/fault_export.h)
 
+
+set(ALL_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE}}")
+if(ALL_CXX_FLAGS MATCHES "-fno-exceptions" OR ALL_CXX_FLAGS MATCHES "/EHs-")
+    message(WARNING "fault: Detected 'No Exceptions' flag")
+    message(AUTHOR_WARNING "fault: Warning: This library is designed with intentional exceptions in mind, specially on its terminate handler. "
+                           "Disabling them may lead to loss of information during termination handling. Consider enabling exceptions for this library target")
+endif()
+
 option(FAULT_INSTALL "Generate install rules for fault" ${PROJECT_IS_TOP_LEVEL})
 
 if(FAULT_INSTALL)

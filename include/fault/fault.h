@@ -112,12 +112,35 @@ static inline void fault_verify_c_v1(bool cond, fault_msg_callback_t callback, v
         }
 }
 
+typedef struct fault_panic_guard_s_v1* fault_panic_guard_handle_v1;
+typedef enum FaultHookScopeV1 { kThreadLocal, kGlobal } FaultHookScopeV1;
+
+typedef void (*fault_panic_callback_t_v1)(char* buffer, size_t buf_size, void* userData);
+
+FAULT_NODISCARD FAULT_EXPORT fault_panic_guard_handle_v1 fault_register_hook_v1(
+    fault_panic_callback_t_v1 cb, void* userData, FaultHookScopeV1 scope) FAULT_NOEXCEPT;
+
+FAULT_EXPORT void fault_release_hook_v1(fault_panic_guard_handle_v1* handle) FAULT_NOEXCEPT;
+
 // ====== Default versions ======
 typedef SignalSettingsV1 SignalSettings;
 typedef PanicSettingsV1 PanicSettings;
 typedef FaultConfigV1 FaultConfig;
 typedef FaultConfigWarningV1 FaultConfigWarning;
 typedef FaultInitResultV1 FaultInitResult;
+typedef fault_panic_callback_t_v1 fault_panic_callback_t;
+typedef fault_panic_guard_handle_v1 fault_panic_guard_handle;
+typedef FaultHookScopeV1 FaultHookScope;
+
+static inline fault_panic_guard_handle fault_register_hook(fault_panic_callback_t cb,
+                                                           void* user_data,
+                                                           FaultHookScope scope) FAULT_NOEXCEPT {
+    return fault_register_hook_v1(cb, user_data, scope);
+}
+
+static inline void fault_release_hook(fault_panic_guard_handle* handle) FAULT_NOEXCEPT {
+    fault_release_hook_v1(handle);
+}
 
 static inline FaultConfig fault_get_default_config() FAULT_NOEXCEPT {
     return fault_get_default_config_v1();
@@ -141,6 +164,22 @@ static inline void fault_verify_c(bool cond, fault_msg_callback_t callback, void
 // ==============================
 
 // NOLINTBEGIN
+#if FAULT_ASSERT_ACTIVE
+#define FAULT_DHOOK_ADD_V1(hook, user_data, scope) fault_register_hook_v1(hook, user_data, scope)
+#define FAULT_DHOOK_DEL_V1(handle) fault_release_hook_v1(handle)
+#else
+#define FAULT_DHOOK_ADD_V1(hook, user_data, scope) NULL
+#define FAULT_DHOOK_DEL_V1(handle) ((void)(handle))
+#endif
+
+#if FAULT_API_VERSION == 1
+#define FAULT_DHOOK_ADD FAULT_DHOOK_ADD_V1
+#define FAULT_DHOOK_DEL FAULT_DHOOK_DEL_V1
+#else
+#define FAULT_DHOOK_ADD
+#define FAULT_DHOOK_DEL
+#endif
+
 #ifndef FAULT_EXPECT_AT_IMPL
 #define FAULT_EXPECT_AT_IMPL_V1(cond, ...) \
     fault_panic_at_v1(#cond, __FILE__, __LINE__, __func__ __VA_OPT__(, ) __VA_ARGS__)

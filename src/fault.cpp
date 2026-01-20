@@ -27,6 +27,7 @@
 
 #include <cpptrace/basic.hpp>
 #include <cpptrace/cpptrace.hpp>
+#include <cpptrace/exceptions.hpp>
 #include <cpptrace/forward.hpp>
 #include <cpptrace/from_current.hpp>
 #include <cpptrace/utils.hpp>
@@ -54,6 +55,12 @@
 
 #include <sys/ucontext.h>
 #include <sys/wait.h>
+#endif
+
+#if defined(__cpp_exceptions)
+#define FAULT_EXCEPTIONS 1
+#else
+#define FAULT_EXCEPTIONS 0
 #endif
 
 namespace fault {
@@ -332,7 +339,9 @@ bool verifyWriteAccess(const std::string& p) noexcept {
 v1::ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fileName,
                                    std::span<char> writeDir, bool prefixDate,
                                    const std::tm& timeInfo, std::string_view extension) noexcept {
+#if FAULT_EXCEPTIONS
     try {
+#endif
         std::string finalPathStr;
         std::string fullFileName;
         if (prefixDate) {
@@ -370,23 +379,29 @@ v1::ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fil
         }
         strSafeCopy(writeDir.data(), writeDir.size(), std::string_view{finalPathStr});
         return v1::ConfigWarning::kNone;
+#if FAULT_EXCEPTIONS
     } catch (...) {
         return v1::ConfigWarning::kInternalError;
     }
+#endif
 }
 
 [[nodiscard]] std::optional<cpptrace::object_trace> tryGetObjectTraceFromException() noexcept {
     // Strangely, this throws if a resolved trace from exception has been called from user
     // beforehand
+#if FAULT_EXCEPTIONS
     try {
+#endif
         auto trace = cpptrace::raw_trace_from_current_exception().resolve_object_trace();
         if (trace.frames.empty()) {
             return std::nullopt;
         }
         return trace;
+#if FAULT_EXCEPTIONS
     } catch (...) {
         return std::nullopt;
     }
+#endif
 }
 
 }  // namespace
@@ -428,6 +443,7 @@ void saveException(std::string_view msg, const v1::ObjectTrace* customTrace) noe
         TracedException{!msg.empty() ? std::string{msg} : "<Unspecified>", std::move(trace)});
 }
 
+#if FAULT_EXCEPTIONS
 std::optional<std::string> rethrowAndAppendSavedExceptionTrace(
     cpptrace::object_trace& baseTrace) noexcept {
     std::lock_guard lock{mutex};
@@ -447,6 +463,7 @@ std::optional<std::string> rethrowAndAppendSavedExceptionTrace(
     }
     return std::nullopt;  // or unreachable even
 }
+#endif
 
 }  // namespace exceptions
 
@@ -460,7 +477,9 @@ std::mutex globalMutex;                                                // NOLINT
 bool invokeAndSave(const std::span<char> buf, std::size_t& offset) noexcept {
     bool anyInvoked{false};
     std::size_t called{0};
+#if FAULT_EXCEPTIONS
     try {
+#endif
         for (const auto& callback : std::ranges::reverse_view(threadCallbacks)) {
             if (callback != nullptr) {
                 const auto str = callback();
@@ -494,6 +513,7 @@ bool invokeAndSave(const std::span<char> buf, std::size_t& offset) noexcept {
                 }
             }
         }
+#if FAULT_EXCEPTIONS
     } catch (...) {
         utils::safeAppend(buf.data(), offset, buf.size(),
                           "Note: Callback printing has been stopped due to an exception thrown "
@@ -501,6 +521,7 @@ bool invokeAndSave(const std::span<char> buf, std::size_t& offset) noexcept {
         utils::itoaSafeAppend(buf.data(), offset, buf.size(), 1 + called);
         utils::safeAppend(buf.data(), offset, buf.size(), "\n");
     }
+#endif
     return anyInvoked;
 }
 
@@ -1346,8 +1367,9 @@ bool findProgramInPath(std::string_view programName, char* outBuffer,
     if (pathEnv == nullptr) {
         return false;
     }
-
+#if FAULT_EXCEPTIONS
     try {
+#endif
         std::string pathStr(pathEnv);
         std::size_t start{0};
         std::size_t end = pathStr.find(':');
@@ -1379,9 +1401,11 @@ bool findProgramInPath(std::string_view programName, char* outBuffer,
         }
 
         return false;
+#if FAULT_EXCEPTIONS
     } catch (...) {
         return false;
     }
+#endif
 }
 
 struct LinuxHandling {
@@ -1770,6 +1794,7 @@ struct TerminateHandling {
         std::size_t detailOffset{};
         utils::safeAppend(details.data(), detailOffset, details.size(),
                           "Reason: std::terminate triggered.\n");
+#if FAULT_EXCEPTIONS
         try {
             const std::exception_ptr exPtr =
                 std::current_exception();  // Last exception (Could be from regular code or throwing
@@ -1796,21 +1821,30 @@ struct TerminateHandling {
                 details.data(), detailOffset, details.size(),
                 "Terminate called due to an unhandled exception of non-std::exception type.\n");
         }
-
+#else
+        utils::safeAppend(userMessage.data(), msgOffset, userMessage.size(), "Terminate called.");
+        utils::safeAppend(details.data(), detailOffset, details.size(),
+                          "Terminate was reached. Exception type cannot be retrieved (Given 'No "
+                          "Exception' flag).\n");
+#endif
         checkCommonExceptions(userMessage, msgOffset, details, detailOffset, trace);
 
         if (TerminateHandling::terminateHook != nullptr) {
+#if FAULT_EXCEPTIONS
             try {
+#endif
                 v1::ObjectTrace faultTrace = adapter::v1::from_cpptrace(trace);
                 TerminateHandling::terminateHook(std::string_view{userMessage.data(), msgOffset},
                                                  faultTrace);
                 trace = adapter::to_cpptrace(faultTrace);
+#if FAULT_EXCEPTIONS
             } catch (...) {
                 utils::safeAppend(
                     details.data(), detailOffset, details.size(),
                     "Note: user provided terminate hook incurred in an exception, and may not have "
                     "been properly handled. This will not affect the report.\n");
             }
+#endif
         }
         if (hasAnySignalBeenTriggered()) {
             ExitHandler::parkThreadForever();
@@ -1826,7 +1860,8 @@ struct TerminateHandling {
 
    public:
     // Appends messages and traces for uncaught exceptions and for user saved traces/exceptions
-    static void checkCommonExceptions(const std::span<char> msg, std::size_t& msgOffset,
+    static void checkCommonExceptions([[maybe_unused]] const std::span<char> msg,
+                                      [[maybe_unused]] std::size_t& msgOffset,
                                       const std::span<char> details, std::size_t& detailOffset,
                                       cpptrace::object_trace& trace) noexcept {
         const auto uncaughtExp = std::uncaught_exceptions();
@@ -1853,6 +1888,7 @@ struct TerminateHandling {
                     "UPSTREAM ======' artifitial frame.\n");
             }
         }
+#if FAULT_EXCEPTIONS
         if (const auto optRethrowStr = exceptions::rethrowAndAppendSavedExceptionTrace(trace);
             optRethrowStr.has_value()) {
             const auto& str = *optRethrowStr;
@@ -1877,6 +1913,7 @@ struct TerminateHandling {
                     "artifitial frame.\n");
             }
         }
+#endif
         hook::invokeAndSave(details, detailOffset);
     }
 
@@ -2055,9 +2092,11 @@ void panic_at(std::string_view expr, std::source_location loc, std::string_view 
     FAULT_UNREACHABLE();
 }
 
-void try_catch(std::function<void()> body, CatchPolicy catchPolicy,
-               std::function<std::string(std::exception_ptr ep, const ObjectTrace& trace)>
-                   onException) noexcept {
+void try_catch(
+    std::function<void()> body, [[maybe_unused]] CatchPolicy catchPolicy,
+    [[maybe_unused]] std::function<std::string(std::exception_ptr ep, const ObjectTrace& trace)>
+        onException) noexcept {
+#if FAULT_EXCEPTIONS
     bool onExceptionCalled{
         false};  // cpptrace actually recursively wraps lambda pairs until a remaining pair exist,
                  // meaning that for the 3 current callables, unwind interceptor will be in place
@@ -2093,10 +2132,12 @@ void try_catch(std::function<void()> body, CatchPolicy catchPolicy,
         }
         FAULT_UNREACHABLE();
     };
-
     cpptrace::try_catch(
         std::move(body), [&kOnCatch](const std::exception& e) { kOnCatch(e.what()); },
         [&kOnCatch]() { kOnCatch(); });
+#else
+    body();
+#endif
 }
 
 PanicGuard::PanicGuard(PanicHook callback, HookScope scope) : scope_{scope} {
@@ -2123,16 +2164,17 @@ PanicGuard::PanicGuard(PanicHook callback, HookScope scope) : scope_{scope} {
 }
 
 void PanicGuard::release() noexcept {
-    if (active_) {
-        if (scope_ == HookScope::kThreadLocal) {
-            hook::threadCallbacks[idx_] = nullptr;
-            active_ = false;
-            return;
-        }
-        std::lock_guard lock{hook::globalMutex};
-        hook::globalCallbacks[idx_] = nullptr;
-        active_ = false;
+    if (!active_) {
+        return;
     }
+    if (scope_ == HookScope::kThreadLocal) {
+        hook::threadCallbacks[idx_] = nullptr;
+        active_ = false;
+        return;
+    }
+    std::lock_guard lock{hook::globalMutex};
+    hook::globalCallbacks[idx_] = nullptr;
+    active_ = false;
 }
 
 PanicGuard::~PanicGuard() {
@@ -2210,6 +2252,35 @@ void fault_panic_at_v1(const char* expr, const char* file, uint32_t line, const 
     fault::v1::panic_at(fault::utils::getSafeView(expr), fault::utils::getSafeView(file), line,
                         fault::utils::getSafeView(func), fault::utils::getSafeView(userMsg));
     FAULT_UNREACHABLE();
+}
+
+fault_panic_guard_handle_v1 fault_register_hook_v1(fault_panic_callback_t_v1 cb, void* userData,
+                                                   FaultHookScopeV1 scope) FAULT_NOEXCEPT {
+#if FAULT_EXCEPTIONS
+    try {
+#endif
+        auto* guard = new fault::v1::PanicGuard(
+            [cb, userData] {
+                std::array<char, 256> bf{};
+                cb(bf.data(), bf.size(), userData);
+                return std::string{bf.data()};
+            },
+            static_cast<fault::v1::HookScope>(static_cast<std::uint8_t>(scope)));
+        return reinterpret_cast<fault_panic_guard_handle_v1>(guard);
+#if FAULT_EXCEPTIONS
+    } catch (...) {
+        return nullptr;
+    }
+#endif
+}
+
+void fault_release_hook_v1(fault_panic_guard_handle_v1* handle) FAULT_NOEXCEPT {
+    if (handle == nullptr || *handle == nullptr) {
+        return;
+    }
+    auto* panicGuard = reinterpret_cast<fault::v1::PanicGuard*>(*handle);
+    delete panicGuard;  // NOLINT(cppcoreguidelines-owning-memory)
+    *handle = nullptr;
 }
 
 }  // extern "C"

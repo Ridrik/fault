@@ -1,6 +1,12 @@
+### 🔗 Quick Links
+[📜 License](./LICENSE) | [📝 Changelog](./CHANGELOG.md) | [⚖️ 3rd Party Licenses](./LICENSE_3RD_PARTY)
+
+
+
 # `fault`
 
 `fault` is a lightweight crash reporting and panic library for C and C++, implemented in C++20. It provides a unified interface for alerting users, saving fault context and trace information when things go wrong, such as segmentation faults on Linux, unhandled SEH exceptions on Windows, std::terminate, or explicit panics and assertions.
+
 
 ### Description
 
