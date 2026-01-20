@@ -16,6 +16,10 @@ const char* on_panic(void* data) {
     return "Unknown system failure";
 }
 
+void panic_callback(char* bf, size_t size, void* data) {
+    snprintf(bf, size, "Some failure message");
+}
+
 int main() {
     FaultConfig config = fault_get_default_config();
     config.appName = "MyApp";
@@ -29,8 +33,12 @@ int main() {
         return 1;
     }
 
+    fault_panic_guard_handle handle = fault_register_hook(panic_callback, NULL, kGlobal);
+    fault_panic_guard_handle handle2 = FAULT_DHOOK_ADD(panic_callback, NULL, kGlobal);
     int status = 404;
     fault_verify_c(status == 200, on_panic, &status);
+    FAULT_DHOOK_DEL(&handle2);
+    fault_release_hook(&handle);
 
     infinite_recursion();  // Triggers seg fault on linux & stack overflow on windows
 

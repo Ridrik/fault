@@ -76,11 +76,6 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    fault::PanicGuard hook{[] { return "kekers"; }, fault::HookScope::kGlobal};
-    fault::PanicGuard hook2{[] { return "ahaha"; }};
-    FAULT_PANIC_GUARD([] { return "yooo"; });
-    FAULT_ASSERT(0, "WTF?");
-
     std::thread([]() { fault::try_catch(foo, fault::CatchPolicy::kPanic); }).detach();
 
     const auto now = std::chrono::steady_clock::now();
