@@ -83,8 +83,8 @@ Reason: panic triggered.
 
 User provided panic callback messages:
 ( Thread Local ) 1: First 2 additions
-(    GLOBAL    ) 1: Adding some numbers that must stay coherent
-(    GLOBAL    ) 2: Print some general, app-wise context
+(    GLOBAL    ) 2: Adding some numbers that must stay coherent
+(    GLOBAL    ) 3: Print some general, app-wise context
 ...
 ```
 

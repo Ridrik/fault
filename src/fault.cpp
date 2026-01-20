@@ -505,7 +505,7 @@ bool invokeAndSave(const std::span<char> buf, std::size_t& offset) noexcept {
                                           "\nUser provided panic callback messages:\n");
                     }
                     utils::safeAppend(buf.data(), offset, buf.size(), "(    GLOBAL    ) ");
-                    utils::itoaSafeAppend(buf.data(), offset, buf.size(), called++);
+                    utils::itoaSafeAppend(buf.data(), offset, buf.size(), 1 + called++);
                     utils::safeAppend(buf.data(), offset, buf.size(), ": ");
                     utils::safeAppend(buf.data(), offset, buf.size(), str.c_str(), str.size());
                     utils::safeAppend(buf.data(), offset, buf.size(), "\n");
