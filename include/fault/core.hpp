@@ -74,14 +74,22 @@
 #define FAULT_EXPECT_IMPL_V1(cond, ...) FAULT_VERIFY_IMPL_V1(false __VA_OPT__(, ) __VA_ARGS__)
 #endif
 
+#if FAULT_ASSERT_ACTIVE
+#define FAULT_PANIC_GUARD_V1(hook) fault::v1::PanicGuard(hook)
+#else
+#define FAULT_PANIC_GUARD_V1(hook) ((void)0)
+#endif
+
 #if FAULT_API_VERSION == 1
 #define FAULT_VERIFY_IMPL FAULT_VERIFY_IMPL_V1
 #define FAULT_EXPECT_AT_IMPL FAULT_EXPECT_AT_IMPL_V1
 #define FAULT_EXPECT_IMPL FAULT_EXPECT_IMPL_V1
+#define FAULT_PANIC_GUARD FAULT_PANIC_GUARD_V1
 #else
 #define FAULT_VERIFY_IMPL
 #define FAULT_EXPECT_AT_IMPL
 #define FAULT_EXPECT_IMPL
+#define FAULT_PANIC_GUARD
 #endif
 
 #include <cstdint>
@@ -183,6 +191,27 @@ struct InitResult {
     explicit operator bool() const {
         return success;
     }
+};
+
+using PanicHook = std::function<std::string()>;
+
+enum class HookScope : std::uint8_t { kThreadLocal, kGlobal };
+
+struct FAULT_EXPORT PanicGuard {
+   public:
+    explicit PanicGuard(PanicHook callback, HookScope scope = HookScope::kThreadLocal);
+    ~PanicGuard();
+    PanicGuard(const PanicGuard&) = delete;
+    PanicGuard& operator=(const PanicGuard&) = delete;
+    PanicGuard(PanicGuard&&) = delete;
+    PanicGuard& operator=(PanicGuard&&) = delete;
+
+    void release() noexcept;
+
+   private:
+    std::size_t idx_{0};
+    HookScope scope_;
+    bool active_{false};
 };
 
 /**

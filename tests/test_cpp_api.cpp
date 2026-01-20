@@ -63,14 +63,23 @@ void foo() {
 
 int main() {
     // Initialize global crash handlers (Signals, SEH, and Terminate)
-    if (!fault::init({.appName = "MyApp",
-                      .buildID = "MyBuildID",
-                      .crashDir = "crash",
-                      .useUnsafeStacktraceOnSignalFallback = true,
-                      .generateMiniDumpWindows = true})) {
+    if (!fault::init(
+            {.appName = "MyApp",
+             .buildID = "MyBuildID",
+             .crashDir = "crash",
+             .useUnsafeStacktraceOnSignalFallback = true,
+             .generateMiniDumpWindows = true,
+             .terminate = fault::Config::TerminateSettings{
+                 .enable = true,
+                 .userHook = [](std::string_view str, fault::ObjectTrace& trace) { throw 42; }}})) {
         std::cerr << "Failed to initialize fault.\n";
         return EXIT_FAILURE;
     }
+
+    fault::PanicGuard hook{[] { return "kekers"; }, fault::HookScope::kGlobal};
+    fault::PanicGuard hook2{[] { return "ahaha"; }};
+    FAULT_PANIC_GUARD([] { return "yooo"; });
+    FAULT_ASSERT(0, "WTF?");
 
     std::thread([]() { fault::try_catch(foo, fault::CatchPolicy::kPanic); }).detach();
 

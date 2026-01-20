@@ -18,6 +18,7 @@
 #include <iostream>
 #include <iterator>
 #include <mutex>
+#include <ranges>
 #include <source_location>
 #include <span>
 #include <string>
@@ -31,6 +32,7 @@
 #include <cpptrace/utils.hpp>
 
 #include "fault/adapter/stacktrace.hpp"
+#include "fault/core.hpp"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -447,6 +449,62 @@ std::optional<std::string> rethrowAndAppendSavedExceptionTrace(
 }
 
 }  // namespace exceptions
+
+namespace hook {
+
+constexpr std::size_t kMaxPanicHooks{16};
+thread_local std::array<PanicHook, kMaxPanicHooks> threadCallbacks{};  // NOLINT
+std::array<PanicHook, kMaxPanicHooks> globalCallbacks{};               // NOLINT
+std::mutex globalMutex;                                                // NOLINT
+
+bool invokeAndSave(const std::span<char> buf, std::size_t& offset) noexcept {
+    bool anyInvoked{false};
+    std::size_t called{0};
+    try {
+        for (const auto& callback : std::ranges::reverse_view(threadCallbacks)) {
+            if (callback != nullptr) {
+                const auto str = callback();
+                if (!anyInvoked) {
+                    utils::safeAppend(buf.data(), offset, buf.size(),
+                                      "\nUser provided panic callback messages:\n");
+                }
+                utils::safeAppend(buf.data(), offset, buf.size(), "( Thread Local ) ");
+                utils::itoaSafeAppend(buf.data(), offset, buf.size(), 1 + called++);
+                utils::safeAppend(buf.data(), offset, buf.size(), ": ");
+                utils::safeAppend(buf.data(), offset, buf.size(), str.c_str(), str.size());
+                utils::safeAppend(buf.data(), offset, buf.size(), "\n");
+                anyInvoked = true;
+            }
+        }
+        {
+            std::lock_guard lock{globalMutex};
+            for (const auto& callback : std::ranges::reverse_view(globalCallbacks)) {
+                if (callback != nullptr) {
+                    const auto str = callback();
+                    if (!anyInvoked) {
+                        utils::safeAppend(buf.data(), offset, buf.size(),
+                                          "\nUser provided panic callback messages:\n");
+                    }
+                    utils::safeAppend(buf.data(), offset, buf.size(), "(    GLOBAL    ) ");
+                    utils::itoaSafeAppend(buf.data(), offset, buf.size(), called++);
+                    utils::safeAppend(buf.data(), offset, buf.size(), ": ");
+                    utils::safeAppend(buf.data(), offset, buf.size(), str.c_str(), str.size());
+                    utils::safeAppend(buf.data(), offset, buf.size(), "\n");
+                    anyInvoked = true;
+                }
+            }
+        }
+    } catch (...) {
+        utils::safeAppend(buf.data(), offset, buf.size(),
+                          "Note: Callback printing has been stopped due to an exception thrown "
+                          "while executing callback number ");
+        utils::itoaSafeAppend(buf.data(), offset, buf.size(), 1 + called);
+        utils::safeAppend(buf.data(), offset, buf.size(), "\n");
+    }
+    return anyInvoked;
+}
+
+}  // namespace hook
 
 namespace _internal {
 
@@ -1742,10 +1800,17 @@ struct TerminateHandling {
         checkCommonExceptions(userMessage, msgOffset, details, detailOffset, trace);
 
         if (TerminateHandling::terminateHook != nullptr) {
-            v1::ObjectTrace faultTrace = adapter::v1::from_cpptrace(trace);
-            TerminateHandling::terminateHook(std::string_view{userMessage.data(), msgOffset},
-                                             faultTrace);
-            trace = adapter::to_cpptrace(faultTrace);
+            try {
+                v1::ObjectTrace faultTrace = adapter::v1::from_cpptrace(trace);
+                TerminateHandling::terminateHook(std::string_view{userMessage.data(), msgOffset},
+                                                 faultTrace);
+                trace = adapter::to_cpptrace(faultTrace);
+            } catch (...) {
+                utils::safeAppend(
+                    details.data(), detailOffset, details.size(),
+                    "Note: user provided terminate hook incurred in an exception, and may not have "
+                    "been properly handled. This will not affect the report.\n");
+            }
         }
         if (hasAnySignalBeenTriggered()) {
             ExitHandler::parkThreadForever();
@@ -1812,6 +1877,7 @@ struct TerminateHandling {
                     "artifitial frame.\n");
             }
         }
+        hook::invokeAndSave(details, detailOffset);
     }
 
     [[nodiscard]] static bool hasTerminateOrHigherBeenReached() noexcept {
@@ -2031,6 +2097,46 @@ void try_catch(std::function<void()> body, CatchPolicy catchPolicy,
     cpptrace::try_catch(
         std::move(body), [&kOnCatch](const std::exception& e) { kOnCatch(e.what()); },
         [&kOnCatch]() { kOnCatch(); });
+}
+
+PanicGuard::PanicGuard(PanicHook callback, HookScope scope) : scope_{scope} {
+    if (scope == HookScope::kThreadLocal) {
+        for (std::size_t i{0}; i < hook::kMaxPanicHooks; ++i) {
+            if (!hook::threadCallbacks[i]) {
+                hook::threadCallbacks[i] = std::move(callback);
+                idx_ = i;
+                active_ = true;
+                return;
+            }
+        }
+        return;
+    }
+    std::lock_guard lock{hook::globalMutex};
+    for (std::size_t i{0}; i < hook::kMaxPanicHooks; ++i) {
+        if (!hook::globalCallbacks[i]) {
+            hook::globalCallbacks[i] = std::move(callback);
+            idx_ = i;
+            active_ = true;
+            return;
+        }
+    }
+}
+
+void PanicGuard::release() noexcept {
+    if (active_) {
+        if (scope_ == HookScope::kThreadLocal) {
+            hook::threadCallbacks[idx_] = nullptr;
+            active_ = false;
+            return;
+        }
+        std::lock_guard lock{hook::globalMutex};
+        hook::globalCallbacks[idx_] = nullptr;
+        active_ = false;
+    }
+}
+
+PanicGuard::~PanicGuard() {
+    release();
 }
 
 }  // namespace v1
