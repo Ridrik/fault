@@ -25,9 +25,10 @@ When a C++ application crashes, the default behavior is often a silent exit or a
   * [Multi-thread fault proof](#1-multi-thread-fault-proof)
   * [Panic, Assertions, Expect](#2-panic-based-assertions)
   * [Panic](#3-panic)
-  * [std::terminate + panic features](#4-stdterminate-handler--panic-features)
-  * [try_catch cpptrace wrapper](#5-try_catch-integration-with-cpptrace-exception-traces)
-    * [cpptrace direct usage](#51-explicitly-with-cpptrace)
+  * [std::terminate + panic features](#31-stdterminate-handler--panic-features)
+  * [try_catch cpptrace wrapper](#4-try_catch-integration-with-cpptrace-exception-traces)
+    * [cpptrace direct usage](#41-explicitly-with-cpptrace)
+  * [Panic Checkpoint hooks](#5-panic-hooks)
 * [C-Language/Older C++ Support](#fault-in-c)
 * [Utilities](#utilities)
 * [Headers](#headers)
@@ -74,7 +75,7 @@ include(FetchContent)
 FetchContent_Declare(
     fault
     GIT_REPOSITORY [https://github.com/Ridrik/fault.git](https://github.com/Ridrik/fault.git)
-    GIT_TAG v0.3.2
+    GIT_TAG v0.4.0
 )
 FetchContent_MakeAvailable(fault)
 
@@ -293,17 +294,18 @@ int main() {
 
 ```
 
-[↑ Back to Top](#fault)
 
----
-
-### 4. std::terminate handler + panic features
+### 3.1 std::terminate handler + panic features
 
 `fault`'s std::terminate handler, as well as its `panic` expressions, try to gather some information about the fault context, and can provide both hints and enhanced traces to the developer in its report log:
 - Did you have a try/catch, but while something in your code threw, a destructor threw again, resulting in a call to std::terminate? `fault` will see that and alert the user. Plus, if it's with `cpptrace` try/catch, it will even propagate the trace to not only show the std::terminate/panic context, but also what the initial fault (throw) was that triggered the unwind event (see [Example](#41-cpptrace-integration)).
 - Did you save a trace to `fault` (see [Postponing traces and exceptions](#utilities)) but while you your threads were communicating or while your main thread was cleaning up, std::terminate or `panic` was triggered? It will also display as message and logs, including a dedicated propagated trace.
 
-### 5. try_catch integration with cpptrace exception traces
+[↑ Back to Top](#fault)
+
+---
+
+### 4. try_catch integration with cpptrace exception traces
 `fault` uses `cpptrace` internally to produce smooth cross-platform traces. This also includes `cpptrace`'s signature capability of retrieving a trace from thrown contexts at catch site, thanks to its unwind interceptor. `fault` leverages this capability and abstracts/wraps it in a way to offer it to consumers who'd rather have an all-in-one package, without needing to link to more libraries than needed.
 
 **fault::try_catch**: a try/catch wrapper that uses `cpptrace` unwind interceptor, automatically storing traces from exceptions and executing a given `fault` catch policy, namely: calling `fault::panic` (no return); saving a traced exception and signaling for shutdown; or returning with no action. An onException callback is invoked before the policy is enacted, containing the exception pointer, and allowing users to perform any custom actions in it, including retrieving exception types given the `std::exception_ptr`, as well as returning a message that will be displayed for the description of the following `fault::panic` or saved exception trace, if any. 
@@ -363,7 +365,7 @@ int main() {
 }
 ```
 
-#### 5.1 Explicitly with cpptrace
+#### 4.1 Explicitly with cpptrace
 Whereas `cpptrace` is hidden by default to consumers, if one wishes to use it, there are some additions that can be used with `fault`. Expanding from the explanation above, for instance, `fault` will provide automatic traces from exceptions on terminate handling, or override traces for panic. See the example below:
 
 ```cpp
@@ -440,6 +442,148 @@ int main() {
 
 ```
 
+
+[↑ Back to Top](#fault)
+
+---
+
+### 5. Panic Hooks
+
+All assertions have options for deferred callbacks, which is helpful. But what if you have common information that you'd like to print for multiple assertions? You'd need to repeat the callback for each, which is ugly and verbose.
+
+And what if you have other information, or actions, that you'd like see printed or performed, but are in a parent scope of the assertion? With standard libraries and features, this would be troublesome to do. To answer this, `fault` introduces the concept of panic checkpoints:
+
+**Panic Hooks**: added user provided callbacks, in a RAII style, to be invoked if any panic, assertion failure, or std::terminate is called within the scope of such hook, in reverse order of registration. See the following example:
+
+```cpp
+namespace {
+
+int add(int a, int b) {
+    return a + b;
+}
+
+void bar() {
+    fault::PanicGuard hook{[] { return "First 2 additions"; }, fault::HookScope::kThreadLocal};
+
+    const auto res = add(5, 10);
+    FAULT_ASSERT(res > 0, "{} with {} Should be positive", 5, 10);
+
+    const auto res2 = add(1, 2);
+    FAULT_ASSERT(res2 == res, "{} not the same as res2 {}", res, res2);
+}
+
+void foo() {
+    fault::PanicGuard hook{[] { return "Adding some numbers that must stay coherent"; },
+                           fault::HookScope::kGlobal};
+    std::thread([] { bar(); }).detach();
+
+    fault::panic("Shouldn't have happened!");
+}
+
+}  // namespace
+
+int main() {
+    // Initialize global crash handlers (Signals, SEH, and Terminate)
+    if (!fault::init({.appName = "MyApp",
+                      .buildID = "MyBuildID",
+                      .crashDir = "crash",
+                      .useUnsafeStacktraceOnSignalFallback = true,
+                      .generateMiniDumpWindows = true})) {
+        std::cerr << "Failed to initialize fault.\n";
+        return EXIT_FAILURE;
+    }
+
+    fault::PanicGuard hook{[] { return "Print some general, app-wise context"; },
+                           fault::HookScope::kGlobal};
+    foo();
+
+    return 0;
+}
+```
+
+With relevant report output:
+
+```
+...
+Technical comments:
+Reason: panic triggered.
+
+User provided panic callback messages:
+(    GLOBAL    ) 0: Adding some numbers that must stay coherent
+(    GLOBAL    ) 1: Print some general, app-wise context
+...
+```
+
+if changing `foo()` to:
+
+```cpp
+void foo() {
+    fault::PanicGuard hook{[] { return "Adding some numbers that must stay coherent"; },
+                           fault::HookScope::kGlobal};
+    std::thread([] { bar(); }).detach();
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    fault::panic("Shouldn't have happened!");
+}
+```
+
+becomes:
+
+```
+...
+Technical comments:
+Reason: panic triggered.
+
+User provided panic callback messages:
+( Thread Local ) 1: First 2 additions
+(    GLOBAL    ) 1: Adding some numbers that must stay coherent
+(    GLOBAL    ) 2: Print some general, app-wise context
+...
+```
+
+There's also `FAULT_DEBUG_GUARD`, which acts like fault::PanicGuard but gets compiled away as `FAULT_ASSERT` (that is, if `FAULT_ASSERTIONS` is `OFF`, or `DEFAULT` with `NDEBUG` builds).
+
+Panic guards provide the user deferred common actions and messages to print should the program terminate via `panic` (including all assertions) or via `std::terminate`. Users may think of them like human-readable code checkpoints, and present invaluable potential for both debugging and even for traceability on production. Note that all callback messages get appended to the details section of the report (thus, not polluting the popup or terminal summary).
+
+For `C` (or older `C++` standard when pre-compiled), equivalent options exist:
+
+```c
+const char* on_panic(void* data) {
+    int* val = (int*)data;
+    if (*val == 404) {
+        return "Resource not found";
+    }
+    return "Unknown system failure";
+}
+
+void panic_callback(char* bf, size_t size, void* data) {
+    snprintf(bf, size, "Some failure message");
+}
+
+int main() {
+    FaultConfig config = fault_get_default_config();
+    config.appName = "MyApp";
+    config.buildID = "MyBuildID";
+    config.crashDir = "crash";
+    config.useUnsafeStacktraceOnSignalFallback = true;
+    const FaultInitResult res =
+        fault_init(&config);  // if no config changes wanted, user can call fault_init(NULL)
+    if (!res.success) {
+        printf("Failed to init fault\n");
+        return 1;
+    }
+
+    fault_panic_guard_handle handle = fault_register_hook(panic_callback, NULL, kGlobal);
+    fault_panic_guard_handle handle2 = FAULT_DHOOK_ADD(panic_callback, NULL, kGlobal);
+    int status = 404;
+    fault_verify_c(status == 200, on_panic, &status);
+    FAULT_DHOOK_DEL(&handle2);
+    fault_release_hook(&handle);
+    printf("C API test passed\n");
+    return 0;
+}
+```
+
+Where `FAULT_DHOOK_ADD` and `FAULT_DHOOK_DEL` are safely compiled away as for `FAULT_ASSERT`.
 
 [↑ Back to Top](#fault)
 

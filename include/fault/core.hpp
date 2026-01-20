@@ -77,9 +77,9 @@
 #endif
 
 #if FAULT_ASSERT_ACTIVE
-#define FAULT_DEBUG_GUARD_V1(hook) fault::v1::PanicGuard(hook)
+#define FAULT_DEBUG_GUARD_V1(hook, scope) fault::v1::PanicGuard(hook, scope)
 #else
-#define FAULT_DEBUG_GUARD_V1(hook) ((void)0)
+#define FAULT_DEBUG_GUARD_V1(hook, scope) ((void)0)
 #endif
 
 #if FAULT_API_VERSION == 1

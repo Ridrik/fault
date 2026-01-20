@@ -1,3 +1,139 @@
+## v0.4.0 - January 2026
+### Added
+- Support for fno-exceptions: `fault` now compiles with flag for no exception. **Note** that this leads to loss of information, specially needed on the terminate handler. It is recommended that users enable exceptions when building `fault`.
+- **Panic Hooks**: added user provided callbacks, in a RAII style, to be invoked if any panic, assertion failure, or std::terminate is called within the scope of such hook, in reverse order of registration. See the following example:
+
+```cpp
+namespace {
+
+int add(int a, int b) {
+    return a + b;
+}
+
+void bar() {
+    fault::PanicGuard hook{[] { return "First 2 additions"; }, fault::HookScope::kThreadLocal};
+
+    const auto res = add(5, 10);
+    FAULT_ASSERT(res > 0, "{} with {} Should be positive", 5, 10);
+
+    const auto res2 = add(1, 2);
+    FAULT_ASSERT(res2 == res, "{} not the same as res2 {}", res, res2);
+}
+
+void foo() {
+    fault::PanicGuard hook{[] { return "Adding some numbers that must stay coherent"; },
+                           fault::HookScope::kGlobal};
+    std::thread([] { bar(); }).detach();
+
+    fault::panic("Shouldn't have happened!");
+}
+
+}  // namespace
+
+int main() {
+    // Initialize global crash handlers (Signals, SEH, and Terminate)
+    if (!fault::init({.appName = "MyApp",
+                      .buildID = "MyBuildID",
+                      .crashDir = "crash",
+                      .useUnsafeStacktraceOnSignalFallback = true,
+                      .generateMiniDumpWindows = true})) {
+        std::cerr << "Failed to initialize fault.\n";
+        return EXIT_FAILURE;
+    }
+
+    fault::PanicGuard hook{[] { return "Print some general, app-wise context"; },
+                           fault::HookScope::kGlobal};
+    foo();
+
+    return 0;
+}
+```
+
+With relevant report output:
+
+```
+...
+Technical comments:
+Reason: panic triggered.
+
+User provided panic callback messages:
+(    GLOBAL    ) 0: Adding some numbers that must stay coherent
+(    GLOBAL    ) 1: Print some general, app-wise context
+...
+```
+
+if changing `foo()` to:
+
+```cpp
+void foo() {
+    fault::PanicGuard hook{[] { return "Adding some numbers that must stay coherent"; },
+                           fault::HookScope::kGlobal};
+    std::thread([] { bar(); }).detach();
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    fault::panic("Shouldn't have happened!");
+}
+```
+
+becomes:
+
+```
+...
+Technical comments:
+Reason: panic triggered.
+
+User provided panic callback messages:
+( Thread Local ) 1: First 2 additions
+(    GLOBAL    ) 1: Adding some numbers that must stay coherent
+(    GLOBAL    ) 2: Print some general, app-wise context
+...
+```
+
+There's also `FAULT_DEBUG_GUARD`, which acts like fault::PanicGuard but gets compiled away as `FAULT_ASSERT` (that is, if `FAULT_ASSERTIONS` is `OFF`, or `DEFAULT` with `NDEBUG` builds).
+
+Panic guards provide the user deferred common actions and messages to print should the program terminate via `panic` (including all assertions) or via `std::terminate`. Users may thing of them like human-readable code checkpoints, and present invaluable potential for both debugging and even for traceability on production. Note that all callback messages get appended to the details section of the report (thus, not polluting the popup or terminal summary).
+
+For `C` (or older `C++` standard when pre-compiled), equivalent options exist:
+
+```c
+const char* on_panic(void* data) {
+    int* val = (int*)data;
+    if (*val == 404) {
+        return "Resource not found";
+    }
+    return "Unknown system failure";
+}
+
+void panic_callback(char* bf, size_t size, void* data) {
+    snprintf(bf, size, "Some failure message");
+}
+
+int main() {
+    FaultConfig config = fault_get_default_config();
+    config.appName = "MyApp";
+    config.buildID = "MyBuildID";
+    config.crashDir = "crash";
+    config.useUnsafeStacktraceOnSignalFallback = true;
+    const FaultInitResult res =
+        fault_init(&config);  // if no config changes wanted, user can call fault_init(NULL)
+    if (!res.success) {
+        printf("Failed to init fault\n");
+        return 1;
+    }
+
+    fault_panic_guard_handle handle = fault_register_hook(panic_callback, NULL, kGlobal);
+    fault_panic_guard_handle handle2 = FAULT_DHOOK_ADD(panic_callback, NULL, kGlobal);
+    int status = 404;
+    fault_verify_c(status == 200, on_panic, &status);
+    FAULT_DHOOK_DEL(&handle2);
+    fault_release_hook(&handle);
+    printf("C API test passed\n");
+    return 0;
+}
+```
+
+Where `FAULT_DHOOK_ADD` and `FAULT_DHOOK_DEL` are safely compiled away as for `FAULT_ASSERT`
+
+
 ## v0.3.2 - January 2026
 ### Updated
 - Small edge case fix when getting a trace from current exception that could throw if a resolved trace had been called by the user before.
