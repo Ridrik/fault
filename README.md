@@ -1,6 +1,5 @@
-### 🔗 Quick Links
-[📜 License](./LICENSE) | [📝 Changelog](./CHANGELOG.md) | [⚖️ 3rd Party Licenses](./LICENSE_3RD_PARTY)
-
+### Quick Links
+[License](./LICENSE) | [Changelog](./CHANGELOG.md) | [3rd Party Licenses](./LICENSE_3RD_PARTY)
 
 
 # `fault`
