@@ -25,7 +25,7 @@ When a C++ application crashes, the default behavior is often a silent exit or a
   * [Multi-thread fault proof](#1-multi-thread-fault-proof)
   * [Panic, Assertions, Expect](#2-panic-based-assertions)
   * [Panic](#3-panic)
-  * [std::terminate + panic features](#31-stdterminate-handler--panic-features)
+    * [std::terminate + panic features](#31-stdterminate-handler--panic-features)
   * [try_catch cpptrace wrapper](#4-try_catch-integration-with-cpptrace-exception-traces)
     * [cpptrace direct usage](#41-explicitly-with-cpptrace)
   * [Panic Checkpoint hooks](#5-panic-hooks)

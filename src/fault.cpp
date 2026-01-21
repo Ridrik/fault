@@ -404,6 +404,19 @@ v1::ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fil
 #endif
 }
 
+[[nodiscard]] inline bool getSafeObjectTrace(cpptrace::object_trace& trace) noexcept {
+#if FAULT_EXCEPTIONS
+    try {
+#endif
+        trace = cpptrace::generate_object_trace();
+        return true;
+#if FAULT_EXCEPTIONS
+    } catch (...) {
+        return false;
+    }
+#endif
+}
+
 }  // namespace
 
 }  // namespace utils
@@ -435,10 +448,24 @@ std::mutex mutex;                              // NOLINT
 
 void saveException(std::string_view msg, const v1::ObjectTrace* customTrace) noexcept {
     std::lock_guard lock{mutex};
-    cpptrace::object_trace trace =
-        customTrace != nullptr
-            ? adapter::to_cpptrace(*customTrace)
-            : utils::tryGetObjectTraceFromException().value_or(cpptrace::generate_object_trace());
+    cpptrace::object_trace trace{};
+    bool generateTrace{customTrace == nullptr};
+    if (customTrace != nullptr) {
+        auto optCustomTrace = adapter::to_cpptrace(*customTrace);
+        if (!optCustomTrace.has_value()) {
+            generateTrace = true;
+        } else {
+            trace = std::move(optCustomTrace).value();
+        }
+    }
+    if (generateTrace) {
+        if (auto optTraceFromException = utils::tryGetObjectTraceFromException();
+            optTraceFromException.has_value()) {
+            trace = std::move(optTraceFromException).value();
+        } else if (!utils::getSafeObjectTrace(trace)) {
+            trace = {};
+        }
+    }
     pendingException = std::make_exception_ptr(
         TracedException{!msg.empty() ? std::string{msg} : "<Unspecified>", std::move(trace)});
 }
@@ -696,9 +723,13 @@ void writeToStdErr(std::string_view message) noexcept {
     utils::safePrint(message.data(), message.size());
 }
 
+// Note on noexcept: when coming from panic or std::terminate, trace is already provided and will
+// not be generated here. Coming from signals where unsafe trace is collected, it can theoretically
+// throw, and noexcept is strategically placed so as to now let it escape (it's undefined
+// behaviour already, best-effort approach)
 bool writeReport(std::string_view errContext,
                  const std::optional<cpptrace::object_trace>& customTrace = std::nullopt,
-                 bool writeResolved = false, bool isRestrictive = true) {
+                 bool writeResolved = false) noexcept {
     static std::atomic<bool> hasBeenHandled{false};
     bool expected{false};
     if (!hasBeenHandled.compare_exchange_strong(expected, true)) {
@@ -744,18 +775,37 @@ bool writeReport(std::string_view errContext,
     utils::safePrint(errContext.data(), errContext.size(), fd);
     utils::safePrint("\n", fd);
     if (customTrace.has_value()) {
-        // Exception: Program is not inside restrictive posix signal handling.
-        if (writeResolved) {
-            const auto resolvedTrace = (*customTrace).resolve();
-            utils::safePrint("Stack Trace:\n", fd);
-            for (const auto& frame : resolvedTrace) {
-                utils::safePrint(frame.to_string().c_str(), fd);
-                utils::safePrint("\n", fd);
+        // Panic or std::terminate: Program is not inside restrictive posix signal handling.
+        const auto& trace = *customTrace;
+        if (trace.frames.empty()) {
+            utils::safePrint("(No object trace is present for display)\n", fd);
+        } else if (writeResolved) {
+            try {  // Not signal handler, safe to try/catch
+                const auto resolvedTrace = trace.resolve();
+                utils::safePrint("Stack Trace:\n", fd);
+                for (const auto& frame : resolvedTrace) {
+                    utils::safePrint(frame.to_string().c_str(), fd);
+                    utils::safePrint("\n", fd);
+                }
+                utils::safePrint("(Regular resolved stacktrace used)\n", fd);
+            } catch (...) {
+                utils::safePrint(
+                    "[Internal error while resolving trace. Defaulting to log unresolved trace]\n",
+                    fd);
+                utils::safePrint("Object Trace:\n", fd);
+                for (const auto& frame : trace.frames) {
+                    utils::safeWriteHex(frame.raw_address, fd);
+                    utils::safePrint(" ", fd);
+                    utils::safeWriteHex(frame.object_address, fd);
+                    utils::safePrint(" ", fd);
+                    utils::safePrint(frame.object_path.c_str(), fd);
+                    utils::safePrint("\n", fd);
+                }
+                utils::safePrint("(Regular unwind used)\n", fd);
             }
-            utils::safePrint("(Regular resolved stacktrace used)\n", fd);
         } else {
             utils::safePrint("Object Trace:\n", fd);
-            for (const auto& frame : customTrace->frames) {
+            for (const auto& frame : trace.frames) {
                 utils::safeWriteHex(frame.raw_address, fd);
                 utils::safePrint(" ", fd);
                 utils::safeWriteHex(frame.object_address, fd);
@@ -765,14 +815,6 @@ bool writeReport(std::string_view errContext,
             }
             utils::safePrint("(Regular unwind used)\n", fd);
         }
-    } else if (writeResolved) {
-        const auto resolvedTrace = cpptrace::generate_trace();
-        utils::safePrint("Stack Trace:\n", fd);
-        for (const auto& frame : resolvedTrace) {
-            utils::safePrint(frame.to_string().c_str(), fd);
-            utils::safePrint("\n", fd);
-        }
-        utils::safePrint("(Regular resolved stacktrace used)\n", fd);
     } else if (can_collect_safe_trace()) {
         utils::safePrint("Object Trace:\n", fd);
         // Program may be inside restrictive signal handling (Possibly linux posix). Collect
@@ -786,13 +828,11 @@ bool writeReport(std::string_view errContext,
             utils::safePrint("\n", fd);
         }
         utils::safePrint("(Safe unwind used)\n", fd);
-    } else if (!isRestrictive || config.useUnsafeStacktraceOnSignalFallback) {
+    } else if (config.useUnsafeStacktraceOnSignalFallback) {
         utils::safePrint("Object Trace:\n", fd);
         // If the program is inside restrictive signal handling, it will attempt here to collect a
-        // regular trace. Should work reliably inside windows vectoring handler (a bit more
-        // permissive), while in linux posix it risks issues like deadlock if the reason for signal
-        // was heap corruption or if any lock (e.g I/O) is being held. The risk is allowed to exist
-        // noting that an alarm is set before hand should this deadlock. ()
+        // regular trace. This is a best-effor approach: it may throw, or deadlock, or recursively
+        // crash. Fault mitigates this with prior alarms and protection agains recursion
         const auto objectTrace = cpptrace::generate_object_trace();
         for (const cpptrace::object_frame& frame : objectTrace) {
             utils::safeWriteHex(frame.raw_address, fd);
@@ -933,7 +973,6 @@ struct WindowsHandling {
     static inline std::atomic<bool> popUpReached{false};
     static inline bool wasDumpWritten{false};
     static inline bool showPopUp{true};
-    static inline bool isRestrictive{true};
     static thread_local inline std::sig_atomic_t tryCount{0};
     static inline HANDLE hCrashEvent{nullptr};
     static inline HANDLE hWatchdogThread{nullptr};
@@ -998,8 +1037,8 @@ struct WindowsHandling {
         std::array<wchar_t, _internal::Config::Windows::dumpPath.size()> dumpPathW{};
         const HANDLE hFile = utils::utf8ToUtf16Stack(_internal::Config::Windows::dumpPath.data(),
                                                      dumpPathW.data(), dumpPathW.size())
-                                 ? CreateFileW(dumpPathW.data(), GENERIC_WRITE, 0, NULL,
-                                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL)
+                                 ? CreateFileW(dumpPathW.data(), GENERIC_WRITE, 0, nullptr,
+                                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr)
                                  : INVALID_HANDLE_VALUE;
         if (hFile == INVALID_HANDLE_VALUE) {
             return false;
@@ -1029,7 +1068,7 @@ struct WindowsHandling {
         const auto written = writeReport
                                  ? ExitHandler::writeReport(
                                        std::string_view{WindowsHandling::finalBuffer.data(), size},
-                                       customTrace, resolveTrace, WindowsHandling::isRestrictive)
+                                       customTrace, resolveTrace)
                                  : false;
         if (printToStderr) {
             std::array<char, 2048> stdErrBfr{};
@@ -1128,7 +1167,7 @@ struct WindowsHandling {
     static void commonActions(const PEXCEPTION_POINTERS exceptionInfo, std::size_t offset,
                               bool printToStderr, bool writeReport,
                               const std::optional<cpptrace::object_trace>& customTrace,
-                              bool resolveTrace) {
+                              bool resolveTrace) noexcept {
         if (hCrashEvent != nullptr && hCrashEvent != INVALID_HANDLE_VALUE) {
             SetEvent(hCrashEvent);
         }
@@ -1146,7 +1185,6 @@ struct WindowsHandling {
         if (!WindowsHandling::checkPermissions()) {
             return;
         }
-        WindowsHandling::isRestrictive = true;
         WindowsHandling::showPopUp = _internal::config.showPopUp;
         std::size_t offset{0};
         constexpr std::string_view kDetails{};
@@ -1205,19 +1243,18 @@ struct WindowsHandling {
 
     [[noreturn]] static void fromTerminate(std::string_view msg, std::string_view details, int code,
                                            bool printToStderr, bool writeReport,
-                                           const cpptrace::object_trace& customTrace,
-                                           bool showPopUp, bool resolveTrace) noexcept {
+                                           cpptrace::object_trace&& customTrace, bool showPopUp,
+                                           bool resolveTrace) noexcept {
         if (!WindowsHandling::checkPermissions()) {
             ExitHandler::shutdown(code);
             FAULT_UNREACHABLE();
         }
-        WindowsHandling::isRestrictive = false;
         WindowsHandling::showPopUp = showPopUp;
         std::size_t offset{0};
         constexpr PEXCEPTION_POINTERS kPExceptionInfo{nullptr};
         WindowsHandling::writeSummaryMessageToBuffer(kPExceptionInfo, msg, details, offset);
         WindowsHandling::commonActions(kPExceptionInfo, offset, printToStderr, writeReport,
-                                       customTrace, resolveTrace);
+                                       std::optional(std::move(customTrace)), resolveTrace);
         ExitHandler::shutdown(code);
         FAULT_UNREACHABLE();
     }
@@ -1423,7 +1460,6 @@ struct LinuxHandling {
     static thread_local inline std::sig_atomic_t tryCount{};
     static inline std::sig_atomic_t signal{-1};
     static inline std::atomic<bool> popUpReached{false};
-    static inline bool isRestrictive{true};
     static inline bool showPopUp{true};
     static inline bool shouldReRaiseSignal{true};
 
@@ -1583,7 +1619,7 @@ struct LinuxHandling {
         const auto written = writeReport
                                  ? ExitHandler::writeReport(
                                        std::string_view{LinuxHandling::finalBuffer.data(), size},
-                                       customTrace, resolveTrace, LinuxHandling::isRestrictive)
+                                       customTrace, resolveTrace)
                                  : false;
         if (printToStderr) {
             std::array<char, 2048> stdErrBfr{};
@@ -1634,7 +1670,6 @@ struct LinuxHandling {
     [[noreturn]] static void linuxSignalHandler(int sig, siginfo_t* info, void* uctx) noexcept {
         LinuxHandling::checkPermissions();
         LinuxHandling::signal = sig;
-        LinuxHandling::isRestrictive = true;
         LinuxHandling::showPopUp = _internal::config.showPopUp;
         LinuxHandling::shouldReRaiseSignal = _internal::config.signal.raiseDefaultAfterwards;
         std::size_t offset{0};
@@ -1687,7 +1722,6 @@ struct LinuxHandling {
                                            const cpptrace::object_trace& customTrace,
                                            bool showPopUp, bool resolveTrace) noexcept {
         LinuxHandling::checkPermissions();
-        LinuxHandling::isRestrictive = false;
         LinuxHandling::signal = code;
         LinuxHandling::showPopUp = showPopUp;
         LinuxHandling::shouldReRaiseSignal = true;
@@ -1787,18 +1821,24 @@ struct TerminateHandling {
             ExitHandler::parkThreadForever();
             FAULT_UNREACHABLE();
         }
-        auto trace = cpptrace::generate_object_trace();
         std::array<char, 1024> userMessage{};
         std::size_t msgOffset{};
         std::array<char, 1024> details{};
         std::size_t detailOffset{};
         utils::safeAppend(details.data(), detailOffset, details.size(),
                           "Reason: std::terminate triggered.\n");
+        cpptrace::object_trace trace{};
+        if (!utils::getSafeObjectTrace(trace)) {
+            trace = {};
+            utils::safeAppend(details.data(), detailOffset, details.size(),
+                              "Note: an internal error has occured while generating an object "
+                              "trace. Base trace won't be reported.\n");
+        }
 #if FAULT_EXCEPTIONS
         try {
             const std::exception_ptr exPtr =
-                std::current_exception();  // Last exception (Could be from regular code or throwing
-                                           // destructor)
+                std::current_exception();  // Last exception (Could be from regular code or
+                                           // throwing destructor)
             if (exPtr) {
                 std::rethrow_exception(exPtr);
             } else {
@@ -1833,16 +1873,16 @@ struct TerminateHandling {
 #if FAULT_EXCEPTIONS
             try {
 #endif
-                v1::ObjectTrace faultTrace = adapter::v1::from_cpptrace(trace);
+                v1::ObjectTrace faultTrace = adapter::v1::from_cpptrace(trace).value_or({});
                 TerminateHandling::terminateHook(std::string_view{userMessage.data(), msgOffset},
                                                  faultTrace);
-                trace = adapter::to_cpptrace(faultTrace);
+                trace = adapter::to_cpptrace(faultTrace).value_or({});
 #if FAULT_EXCEPTIONS
             } catch (...) {
-                utils::safeAppend(
-                    details.data(), detailOffset, details.size(),
-                    "Note: user provided terminate hook incurred in an exception, and may not have "
-                    "been properly handled. This will not affect the report.\n");
+                utils::safeAppend(details.data(), detailOffset, details.size(),
+                                  "Note: user provided terminate hook incurred in an "
+                                  "exception, and may not have "
+                                  "been properly handled. This will not affect the report.\n");
             }
 #endif
         }
@@ -1854,7 +1894,7 @@ struct TerminateHandling {
         TerminateHandling::controlledShutdown(std::string_view{userMessage.data(), msgOffset},
                                               std::string_view{details.data(), detailOffset},
                                               _internal::config.printMsgToStdErr, kWriteReport,
-                                              trace, _internal::config.showPopUp);
+                                              std::move(trace), _internal::config.showPopUp);
         FAULT_UNREACHABLE();
     }
 
@@ -1864,54 +1904,65 @@ struct TerminateHandling {
                                       [[maybe_unused]] std::size_t& msgOffset,
                                       const std::span<char> details, std::size_t& detailOffset,
                                       cpptrace::object_trace& trace) noexcept {
-        const auto uncaughtExp = std::uncaught_exceptions();
-        if (uncaughtExp > 0) {
-            utils::safeAppendFmt(
-                details.data(), detailOffset, details.size(),
-                "Note: Stack unwinding was in progress when std::terminate was called "
-                "(std::uncaught_exceptions = {}).\n",
-                uncaughtExp);
-            if (auto optExceptionTrace = utils::tryGetObjectTraceFromException();
-                optExceptionTrace.has_value()) {  // Will only exist when cpptrace intercepted it
-                                                  // (implies consumer uses cpptrace try/catch)
-                auto& exceptionTrace = *optExceptionTrace;
-                trace.frames.push_back(
-                    cpptrace::object_frame{.raw_address = 0,
-                                           .object_address = 0,
-                                           .object_path = {"====== UPSTREAM ======"}});
-                trace.frames.insert(trace.frames.end(),
-                                    std::make_move_iterator(exceptionTrace.frames.begin()),
-                                    std::make_move_iterator(exceptionTrace.frames.end()));
-                utils::safeAppend(
-                    details.data(), detailOffset, details.size(),
-                    "The initial unwind was saved and should be displayed below, under '====== "
-                    "UPSTREAM ======' artifitial frame.\n");
-            }
-        }
 #if FAULT_EXCEPTIONS
-        if (const auto optRethrowStr = exceptions::rethrowAndAppendSavedExceptionTrace(trace);
-            optRethrowStr.has_value()) {
-            const auto& str = *optRethrowStr;
-            if (!str.empty()) {
-                utils::safeAppendFmt(msg.data(), msgOffset, msg.size(),
-                                     "\nPropagated from upstream exception: {}.", str);
-                utils::safeAppendFmt(details.data(), detailOffset, details.size(),
-                                     "A saved exception was retrieved with message: {}.\nIt should "
-                                     "be visible in "
-                                     "the object/stack trace, under the delimiter '====== "
-                                     "PROPAGATED ======' "
-                                     "artifitial frame.\n",
-                                     str);
-            } else {
-                utils::safeAppend(msg.data(), msgOffset, msg.size(),
-                                  "\nPropagated from upstream exception.");
-                utils::safeAppend(
+        try {
+#endif
+            const auto uncaughtExp = std::uncaught_exceptions();
+            if (uncaughtExp > 0) {
+                utils::safeAppendFmt(
                     details.data(), detailOffset, details.size(),
-                    "A saved exception was retrieved with no message provided.\nIt should be "
-                    "visible in "
-                    "the object/stack trace, under the delimiter '====== PROPAGATED ======' "
-                    "artifitial frame.\n");
+                    "Note: Stack unwinding was in progress when std::terminate was called "
+                    "(std::uncaught_exceptions = {}).\n",
+                    uncaughtExp);
+                if (auto optExceptionTrace = utils::tryGetObjectTraceFromException();
+                    optExceptionTrace
+                        .has_value()) {  // Will only exist when cpptrace intercepted it
+                                         // (implies consumer uses cpptrace try/catch)
+                    auto& exceptionTrace = *optExceptionTrace;
+                    trace.frames.push_back(
+                        cpptrace::object_frame{.raw_address = 0,
+                                               .object_address = 0,
+                                               .object_path = {"====== UPSTREAM ======"}});
+                    trace.frames.insert(trace.frames.end(),
+                                        std::make_move_iterator(exceptionTrace.frames.begin()),
+                                        std::make_move_iterator(exceptionTrace.frames.end()));
+                    utils::safeAppend(details.data(), detailOffset, details.size(),
+                                      "The initial unwind was saved and should be displayed "
+                                      "below, under '====== "
+                                      "UPSTREAM ======' artifitial frame.\n");
+                }
             }
+#if FAULT_EXCEPTIONS
+            if (const auto optRethrowStr = exceptions::rethrowAndAppendSavedExceptionTrace(trace);
+                optRethrowStr.has_value()) {
+                const auto& str = *optRethrowStr;
+                if (!str.empty()) {
+                    utils::safeAppendFmt(msg.data(), msgOffset, msg.size(),
+                                         "\nPropagated from upstream exception: {}.", str);
+                    utils::safeAppendFmt(
+                        details.data(), detailOffset, details.size(),
+                        "A saved exception was retrieved with message: {}.\nIt should "
+                        "be visible in "
+                        "the object/stack trace, under the delimiter '====== "
+                        "PROPAGATED ======' "
+                        "artifitial frame.\n",
+                        str);
+                } else {
+                    utils::safeAppend(msg.data(), msgOffset, msg.size(),
+                                      "\nPropagated from upstream exception.");
+                    utils::safeAppend(details.data(), detailOffset, details.size(),
+                                      "A saved exception was retrieved with no message "
+                                      "provided.\nIt should be "
+                                      "visible in "
+                                      "the object/stack trace, under the delimiter '====== "
+                                      "PROPAGATED ======' "
+                                      "artifitial frame.\n");
+                }
+            }
+        } catch (...) {
+            utils::safeAppend(details.data(), detailOffset, details.size(),
+                              "\n[Internal error while appending data from uncaught exception and "
+                              "saved exceptions]\n");
         }
 #endif
         hook::invokeAndSave(details, detailOffset);
@@ -1922,7 +1973,7 @@ struct TerminateHandling {
     }
     [[noreturn]] static void controlledShutdown(std::string_view message, std::string_view details,
                                                 bool printToStderr, bool writeReport,
-                                                const cpptrace::object_trace& customTrace,
+                                                cpptrace::object_trace&& customTrace,
                                                 bool showPopUp) noexcept {
 #if defined(__linux__)
         constexpr int kTerminateCode{SIGABRT};
@@ -1932,7 +1983,7 @@ struct TerminateHandling {
 #else
         constexpr int kTerminateCode{3};
         WindowsHandling::fromTerminate(message, details, kTerminateCode, printToStderr, writeReport,
-                                       customTrace, showPopUp,
+                                       std::move(customTrace), showPopUp,
                                        _internal::config.resolveNonSignalTrace);
 #endif
         FAULT_UNREACHABLE();
@@ -1993,6 +2044,21 @@ static std::atomic<bool> shutdownRequest{false};  // NOLINT
 
 }  // namespace
 
+#if FAULT_API_VERSION == 1
+inline
+#endif
+    namespace v1 {
+
+namespace {
+
+::FaultInitResultV1 fromCppInitResult(InitResult cppRes) noexcept {
+    return ::FaultInitResultV1{.success = cppRes.success,
+                               .warnings = static_cast<::FaultConfigWarningV1>(
+                                   static_cast<std::uint8_t>(cppRes.warnings))};
+}
+
+}  // namespace
+
 bool set_shutdown_request() noexcept {
     bool expected{false};
     return shutdownRequest.compare_exchange_strong(expected, true);
@@ -2010,21 +2076,6 @@ bool has_saved_traced_exception() noexcept {
     return exceptions::pendingException != nullptr;
 }
 
-#if FAULT_API_VERSION == 1
-inline
-#endif
-    namespace v1 {
-
-namespace {
-
-::FaultInitResultV1 fromCppInitResult(InitResult cppRes) noexcept {
-    return ::FaultInitResultV1{.success = cppRes.success,
-                               .warnings = static_cast<::FaultConfigWarningV1>(
-                                   static_cast<std::uint8_t>(cppRes.warnings))};
-}
-
-}  // namespace
-
 InitResult init(const Config& config) noexcept {
     return tryInit(config);
 }
@@ -2033,16 +2084,38 @@ void save_traced_exception(std::string_view msg, const ObjectTrace* customTrace)
     exceptions::saveException(msg, customTrace);
 }
 
-void panic_impl(std::string_view message, const ObjectTrace* customTrace) {
-    cpptrace::object_trace cppObjTrace = customTrace == nullptr
-                                             ? cpptrace::generate_object_trace()
-                                             : adapter::to_cpptrace(*customTrace);
+void panic_impl(std::string_view message, const ObjectTrace* customTrace) noexcept {
     std::array<char, 1024> msgBuffer{};
     std::size_t msgOffset{0};
     std::array<char, 1024> detailBuffer{};
     std::size_t detailOffset{0};
     utils::safeAppend(detailBuffer.data(), detailOffset, detailBuffer.size(),
                       "Reason: panic triggered.\n");
+
+    cpptrace::object_trace cppObjTrace{};
+    bool generateTrace{customTrace == nullptr};
+    if (customTrace != nullptr) {
+        const auto& refCustomTrace = *customTrace;
+        if (refCustomTrace.frames.empty()) {
+            utils::safeAppend(detailBuffer.data(), detailOffset, detailBuffer.size(),
+                              "Note: user provided empty trace. Generating a default one.\n");
+            generateTrace = true;
+        } else if (auto optAdaptTrace = adapter::to_cpptrace(*customTrace);
+                   !optAdaptTrace.has_value()) {
+            utils::safeAppend(detailBuffer.data(), detailOffset, detailBuffer.size(),
+                              "Note: Internal error on user provided trace. "
+                              "Generating a default one.\n");
+            generateTrace = true;
+        } else {
+            cppObjTrace = std::move(optAdaptTrace).value();
+        }
+    }
+    if (generateTrace && !utils::getSafeObjectTrace(cppObjTrace)) {
+        cppObjTrace = {};
+        utils::safeAppend(detailBuffer.data(), detailOffset, detailBuffer.size(),
+                          "Note: internal error on generating object "
+                          "trace. Base trace won't be reported.\n");
+    }
     if (!message.empty()) {
         utils::safeAppend(msgBuffer.data(), msgOffset, msgBuffer.size(), message.data(),
                           message.size());
@@ -2051,16 +2124,16 @@ void panic_impl(std::string_view message, const ObjectTrace* customTrace) {
     }
     TerminateHandling::checkCommonExceptions(std::span{msgBuffer}, msgOffset,
                                              std::span{detailBuffer}, detailOffset, cppObjTrace);
-    TerminateHandling::controlledShutdown(std::string_view{msgBuffer.data(), msgOffset},
-                                          std::string_view{detailBuffer.data(), detailOffset},
-                                          _internal::config.panic.printMsgToStdErr,
-                                          _internal::config.panic.writeReport, cppObjTrace,
-                                          _internal::config.panic.showPopUp);
+    TerminateHandling::controlledShutdown(
+        std::string_view{msgBuffer.data(), msgOffset},
+        std::string_view{detailBuffer.data(), detailOffset},
+        _internal::config.panic.printMsgToStdErr, _internal::config.panic.writeReport,
+        std::move(cppObjTrace), _internal::config.panic.showPopUp);
     FAULT_UNREACHABLE();
 }
 
 void panic_at(std::string_view expr, std::string_view file, std::uint32_t line,
-              std::string_view func, std::string_view userMsg) {
+              std::string_view func, std::string_view userMsg) noexcept {
     std::array<char, 1024> msg{};
     std::size_t offset{0};
     utils::safeAppend(msg.data(), offset, msg.size(), "Assertion failed");
@@ -2087,7 +2160,7 @@ void panic_at(std::string_view expr, std::string_view file, std::uint32_t line,
     FAULT_UNREACHABLE();
 }
 
-void panic_at(std::string_view expr, std::source_location loc, std::string_view userMsg) {
+void panic_at(std::string_view expr, std::source_location loc, std::string_view userMsg) noexcept {
     panic_at(expr, loc.file_name(), loc.line(), loc.function_name(), userMsg);
     FAULT_UNREACHABLE();
 }
@@ -2106,20 +2179,29 @@ void try_catch(
 
     const auto kOnCatch = [&onException, &onExceptionCalled,
                            catchPolicy](std::string_view msg = "") {
-        const auto objectTrace = fault::adapter::from_cpptrace(
-            utils::tryGetObjectTraceFromException().value_or(cpptrace::generate_object_trace()));
+        cpptrace::object_trace cppObjTrace{};
+        if (auto optTrace = utils::tryGetObjectTraceFromException(); optTrace.has_value()) {
+            cppObjTrace = std::move(optTrace).value();
+        } else if (!utils::getSafeObjectTrace(cppObjTrace)) {
+            cppObjTrace = {};
+        }
+        const auto objectTrace = fault::adapter::from_cpptrace(cppObjTrace).value_or({});
         auto effectiveMsg = msg;
-        std::string userMsg;
-        if (!onExceptionCalled && onException != nullptr) {
-            onExceptionCalled = true;
-            userMsg = onException(std::current_exception(), objectTrace);
-            if (!userMsg.empty()) {
-                effectiveMsg = userMsg;
+        try {
+            std::string userMsg;
+            if (!onExceptionCalled && onException != nullptr) {
+                onExceptionCalled = true;
+                userMsg = onException(std::current_exception(), objectTrace);
+                if (!userMsg.empty()) {
+                    effectiveMsg = userMsg;
+                }
             }
+        } catch (...) {
+            effectiveMsg = msg;
         }
         switch (catchPolicy) {
             case CatchPolicy::kPanic: {
-                panic(objectTrace, effectiveMsg);
+                panic_impl(effectiveMsg, &objectTrace);
                 FAULT_UNREACHABLE();
             }
             case CatchPolicy::kSaveExceptionWithShutdownRequest: {
@@ -2177,7 +2259,7 @@ void PanicGuard::release() noexcept {
     active_ = false;
 }
 
-PanicGuard::~PanicGuard() {
+PanicGuard::~PanicGuard() noexcept {
     release();
 }
 
@@ -2188,7 +2270,7 @@ PanicGuard::~PanicGuard() {
 extern "C" {
 
 bool fault_can_collect_safe_trace() FAULT_NOEXCEPT {
-    return fault::can_collect_safe_trace();
+    return fault::v1::can_collect_safe_trace();
 }
 
 FaultConfigV1 fault_get_default_config_v1() FAULT_NOEXCEPT {
@@ -2241,14 +2323,14 @@ FaultInitResultV1 fault_init_v1(const FaultConfigV1* config) FAULT_NOEXCEPT {
     return fault::v1::fromCppInitResult(fault::tryInit(cppConfig));
 }
 
-void fault_panic_v1(const char* message) {
+void fault_panic_v1(const char* message) FAULT_NOEXCEPT {
     constexpr const fault::v1::ObjectTrace* kNoExceptionTrace{nullptr};
     fault::v1::panic_impl(fault::utils::getSafeView(message), kNoExceptionTrace);
     FAULT_UNREACHABLE();
 }
 
 void fault_panic_at_v1(const char* expr, const char* file, uint32_t line, const char* func,
-                       const char* userMsg) {
+                       const char* userMsg) FAULT_NOEXCEPT {
     fault::v1::panic_at(fault::utils::getSafeView(expr), fault::utils::getSafeView(file), line,
                         fault::utils::getSafeView(func), fault::utils::getSafeView(userMsg));
     FAULT_UNREACHABLE();

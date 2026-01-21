@@ -13,14 +13,14 @@ inline
     namespace v1 {
 
 template <typename... Args>
-FAULT_NORETURN inline void panic(std::format_string<Args...> fmt, Args&&... args) {
+FAULT_NORETURN inline void panic(std::format_string<Args...> fmt, Args&&... args) noexcept {
     panic_impl(std::format(fmt, std::forward<Args>(args)...), nullptr);
     FAULT_UNREACHABLE();
 }
 
 template <typename... Args>
 FAULT_NORETURN inline void panic(const ObjectTrace& trace, std::format_string<Args...> fmt,
-                                 Args&&... args) {
+                                 Args&&... args) noexcept {
     panic_impl(std::format(fmt, std::forward<Args>(args)...), &trace);
     FAULT_UNREACHABLE();
 }
@@ -29,7 +29,7 @@ FAULT_NORETURN inline void panic(const ObjectTrace& trace, std::format_string<Ar
  * @brief Verify invariant version with format args
  */
 template <typename... Args>
-inline void verify(bool cond, std::format_string<Args...> fmt, Args&&... args) {
+inline void verify(bool cond, std::format_string<Args...> fmt, Args&&... args) noexcept {
     if (!cond) [[unlikely]] {
         panic_impl(std::format(fmt, std::forward<Args>(args)...));
         FAULT_UNREACHABLE();
@@ -55,7 +55,7 @@ macro.
  */
 template <typename... Args>
 inline void panic_at(std::string_view expr, std::source_location loc,
-                     std::format_string<Args...> fmt, Args&&... args) {
+                     std::format_string<Args...> fmt, Args&&... args) noexcept {
     panic_at(expr, loc, std::format(fmt, std::forward<Args>(args)...));
 }
 
@@ -75,14 +75,15 @@ void expect_at(bool cond, PanicFormat<std::type_identity_t<Args>...> fmt, Args&&
  */
 template <class... Args>
 #if FAULT_USE_LOCATIONS
-inline void expect(bool cond, PanicFormat<std::type_identity_t<Args>...> fmt, Args&&... args) {
+inline void expect(bool cond, PanicFormat<std::type_identity_t<Args>...> fmt,
+                   Args&&... args) noexcept {
     if (!cond) [[unlikely]] {
         expect_at(false, fmt, std::forward<Args>(args)...);
         FAULT_UNREACHABLE();
     }
 }
 #else
-inline void expect(bool cond, std::format_string<Args...> fmt, Args&&... args) {
+inline void expect(bool cond, std::format_string<Args...> fmt, Args&&... args) noexcept {
     if (!cond) [[unlikely]] {
         verify(false, fmt, std::forward<Args>(args)...);
         FAULT_UNREACHABLE();

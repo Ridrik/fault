@@ -97,6 +97,7 @@
 #include <cstdint>
 #include <exception>
 #include <functional>
+#include <optional>
 #include <source_location>
 #include <string>
 #include <string_view>
@@ -113,17 +114,16 @@ constexpr std::string_view kDefaultErrorMessage{
     "The application encountered a fatal error and must close. If the problem "
     "persists, please "
     "contact the program maintainer."};
+#if FAULT_API_VERSION == 1
+inline
+#endif
+    namespace v1 {
 
 /**
  * @brief Returns wether fault has a saved exception from fault::save_traced_exception.
  *
  */
 FAULT_NODISCARD FAULT_EXPORT bool has_saved_traced_exception() noexcept;
-
-#if FAULT_API_VERSION == 1
-inline
-#endif
-    namespace v1 {
 
 struct FAULT_EXPORT Frame {
     std::uintptr_t rawAddress{};
@@ -216,7 +216,7 @@ struct FAULT_EXPORT PanicGuard {
      * @param scope scope in which it should be evoked. Defaults to thread local
      */
     explicit PanicGuard(PanicHook callback, HookScope scope = HookScope::kThreadLocal);
-    ~PanicGuard();
+    ~PanicGuard() noexcept;
     PanicGuard(const PanicGuard&) = delete;
     PanicGuard& operator=(const PanicGuard&) = delete;
     PanicGuard(PanicGuard&&) = delete;
@@ -257,6 +257,11 @@ FAULT_EXPORT InitResult init(const Config& config = {}) noexcept;
 FAULT_EXPORT void save_traced_exception(std::string_view msg,
                                         const ObjectTrace* customTrace = nullptr) noexcept;
 
+inline void save_traced_exception(std::string_view msg,
+                                  const std::optional<ObjectTrace>& customTrace) noexcept {
+    save_traced_exception(msg, customTrace.has_value() ? &*customTrace : nullptr);
+}
+
 /**
  * @brief panic implementation
  *
@@ -264,7 +269,7 @@ FAULT_EXPORT void save_traced_exception(std::string_view msg,
  * @param customTrace Optional bject trace to be logged instead of default generated one.
  */
 [[noreturn]] FAULT_EXPORT void panic_impl(std::string_view message,
-                                          const ObjectTrace* customTrace = nullptr);
+                                          const ObjectTrace* customTrace = nullptr) noexcept;
 
 /**
  * @brief Use this to immediately shutdown the application and perform similar actions as the
@@ -275,7 +280,7 @@ FAULT_EXPORT void save_traced_exception(std::string_view msg,
  * @param message message to be displayed on report, stderr and popup
  *
  */
-[[noreturn]] inline void panic(std::string_view message = {}) {
+[[noreturn]] inline void panic(std::string_view message = {}) noexcept {
     panic_impl(message, nullptr);
     FAULT_UNREACHABLE();
 }
@@ -299,8 +304,20 @@ inline void panic_if_has_saved_exception(std::string_view message = {}) noexcept
  * @param trace Object trace to be logged instead of default generated one.
  * @param message message to be displayed on report, stderr and popup
  */
-[[noreturn]] inline void panic(const ObjectTrace& trace, std::string_view message = {}) {
+[[noreturn]] inline void panic(const ObjectTrace& trace, std::string_view message = {}) noexcept {
     panic_impl(message, &trace);
+    FAULT_UNREACHABLE();
+}
+
+/**
+ * @brief panic version with an optional trace override for report.
+ *
+ * @param trace Object trace to be logged instead of default generated one.
+ * @param message message to be displayed on report, stderr and popup
+ */
+[[noreturn]] inline void panic(const std::optional<ObjectTrace>& trace,
+                               std::string_view message = {}) noexcept {
+    panic_impl(message, trace.has_value() ? &*trace : nullptr);
     FAULT_UNREACHABLE();
 }
 
@@ -313,7 +330,7 @@ inline void panic_if_has_saved_exception(std::string_view message = {}) noexcept
  */
 [[noreturn]] FAULT_EXPORT void panic_at(std::string_view expr,
                                         std::source_location loc = std::source_location::current(),
-                                        std::string_view userMsg = {});
+                                        std::string_view userMsg = {}) noexcept;
 
 /**
  * @brief Panic version using metadata information, for invariant failures with source location.
@@ -328,7 +345,7 @@ template <typename MsgFn>
              std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
 [[noreturn]] void panic_at(
     std::string_view expr, std::source_location loc = std::source_location::current(),
-    MsgFn&& msgFn = [] { return ""; }) {
+    MsgFn&& msgFn = [] { return ""; }) noexcept {
     if constexpr (requires { bool(msgFn); }) {
         if (!msgFn) {
             panic_at(expr, loc, "<null message provider>");
@@ -347,7 +364,7 @@ template <typename MsgFn>
  * @param cond condition to verify
  * @param userMsg user message to be displayed & logged
  */
-inline void verify(bool cond, std::string_view userMsg = {}) {
+inline void verify(bool cond, std::string_view userMsg = {}) noexcept {
     if (!cond) [[unlikely]] {
         panic(userMsg);
         FAULT_UNREACHABLE();
@@ -364,7 +381,7 @@ inline void verify(bool cond, std::string_view userMsg = {}) {
 template <typename MsgFn>
     requires std::invocable<MsgFn> &&
              std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
-inline void verify(bool cond, MsgFn&& msgFn) {
+inline void verify(bool cond, MsgFn&& msgFn) noexcept {
     if (!cond) [[unlikely]] {
         if constexpr (requires { bool(msgFn); }) {
             if (!msgFn) {
@@ -385,7 +402,7 @@ inline void verify(bool cond, MsgFn&& msgFn) {
  * @param loc location metadata to be displayed & logged
  */
 inline void expect_at(bool cond, std::string_view userMsg = {},
-                      std::source_location loc = std::source_location::current()) {
+                      std::source_location loc = std::source_location::current()) noexcept {
     if (!cond) [[unlikely]] {
         panic_at("", loc, userMsg);
         FAULT_UNREACHABLE();
@@ -404,7 +421,7 @@ template <typename MsgFn>
     requires std::invocable<MsgFn> &&
              std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
 inline void expect_at(bool cond, MsgFn&& msgFn,
-                      std::source_location loc = std::source_location::current()) {
+                      std::source_location loc = std::source_location::current()) noexcept {
     if (!cond) [[unlikely]] {
         if constexpr (requires { bool(msgFn); }) {
             if (!msgFn) {
@@ -430,7 +447,7 @@ inline void expect(bool cond, std::string_view userMsg = {}
                    ,
                    std::source_location loc = std::source_location::current()
 #endif
-) {
+                       ) noexcept {
     if (!cond) [[unlikely]] {
 #if FAULT_USE_LOCATIONS
         expect_at(false, userMsg, loc);
@@ -455,7 +472,7 @@ inline void expect(bool cond, MsgFn&& msgFn
                    ,
                    std::source_location loc = std::source_location::current()
 #endif
-) {
+                       ) noexcept {
     if (!cond) [[unlikely]] {
 #if FAULT_USE_LOCATIONS
         expect_at(false, std::forward<MsgFn>(msgFn), loc);
@@ -495,8 +512,6 @@ FAULT_EXPORT void try_catch(
     std::function<std::string(std::exception_ptr ep, const ObjectTrace& trace)> onException =
         nullptr) noexcept;
 
-}  // namespace v1
-
 /**
  * @brief Stores shutdown request
  *
@@ -517,6 +532,8 @@ FAULT_NODISCARD FAULT_EXPORT bool has_shutdown_request() noexcept;
  *
  */
 FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
+
+}  // namespace v1
 
 }  // namespace fault
 

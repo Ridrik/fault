@@ -80,23 +80,23 @@ FAULT_NODISCARD FAULT_EXPORT bool fault_has_shutdown_request() FAULT_NOEXCEPT;
 
 FAULT_NODISCARD FAULT_EXPORT bool fault_can_collect_safe_trace() FAULT_NOEXCEPT;
 
-FAULT_NORETURN FAULT_EXPORT void fault_panic_v1(const char* message);
+FAULT_NORETURN FAULT_EXPORT void fault_panic_v1(const char* message) FAULT_NOEXCEPT;
 
 FAULT_NORETURN FAULT_EXPORT void fault_panic_at_v1(const char* expr, const char* file,
                                                    uint32_t line, const char* func,
-                                                   const char* userMsg);
+                                                   const char* userMsg) FAULT_NOEXCEPT;
 
 typedef const char* (*fault_msg_callback_t)(void* user_data);
 
 FAULT_NORETURN static inline void fault_panic_at_c_v1(const char* expr, const char* file,
                                                       uint32_t line, const char* func,
                                                       fault_msg_callback_t callback,
-                                                      void* user_data) {
+                                                      void* user_data) FAULT_NOEXCEPT {
     fault_panic_at_v1(expr, file, line, func, callback(user_data));
     FAULT_UNREACHABLE();
 }
 
-static inline void fault_verify_v1(bool cond, const char* message) {
+static inline void fault_verify_v1(bool cond, const char* message) FAULT_NOEXCEPT {
     if (FAULT_EXPECT_FALSE(!(cond)))
         FAULT_UNLIKELY {
             fault_panic_v1(message);
@@ -104,7 +104,8 @@ static inline void fault_verify_v1(bool cond, const char* message) {
         }
 }
 
-static inline void fault_verify_c_v1(bool cond, fault_msg_callback_t callback, void* user_data) {
+static inline void fault_verify_c_v1(bool cond, fault_msg_callback_t callback,
+                                     void* user_data) FAULT_NOEXCEPT {
     if (FAULT_EXPECT_FALSE(!(cond)))
         FAULT_UNLIKELY {
             fault_panic_v1(callback(user_data));
@@ -150,15 +151,16 @@ static inline FaultInitResult fault_init(const FaultConfig* config) FAULT_NOEXCE
     return fault_init_v1(config);
 }
 
-FAULT_NORETURN static inline void fault_panic(const char* message) {
+FAULT_NORETURN static inline void fault_panic(const char* message) FAULT_NOEXCEPT {
     fault_panic_v1(message);
 }
 
-static inline void fault_verify(bool cond, const char* message) {
+static inline void fault_verify(bool cond, const char* message) FAULT_NOEXCEPT {
     fault_verify_v1(cond, message);
 }
 
-static inline void fault_verify_c(bool cond, fault_msg_callback_t callback, void* user_data) {
+static inline void fault_verify_c(bool cond, fault_msg_callback_t callback,
+                                  void* user_data) FAULT_NOEXCEPT {
     fault_verify_c_v1(cond, callback, user_data);
 }
 // ==============================
