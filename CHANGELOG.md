@@ -1,3 +1,9 @@
+## v0.4.1 - January 2026
+### Updated
+- Enforced `noexcept` on all `panic` functions
+- All C++ functions are now inside version namespace
+- Small API additions
+
 ## v0.4.0 - January 2026
 ### Added
 - Support for fno-exceptions: `fault` now compiles with flag for no exception. **Note** that this leads to loss of information, specially needed on the terminate handler. It is recommended that users enable exceptions when building `fault`.

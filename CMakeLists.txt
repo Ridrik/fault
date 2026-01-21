@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21...4.1)
 
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-project(fault VERSION 0.4.0 LANGUAGES C CXX)
+project(fault VERSION 0.4.1 LANGUAGES C CXX)
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/version.h.in"
