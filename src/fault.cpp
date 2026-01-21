@@ -178,7 +178,7 @@ void getNowSafe(std::int64_t& outSec, std::int64_t& outNsec) noexcept {
     outSec = static_cast<std::int64_t>((uli.QuadPart / 10000000ULL) - kUnixOffset);
     outNsec = static_cast<std::int64_t>(((uli.QuadPart % 10000000ULL) * 100));
 #else
-    struct timespec ts {};
+    struct timespec ts{};
     clock_gettime(CLOCK_REALTIME, &ts);
     outSec = ts.tv_sec;
     outNsec = ts.tv_nsec;
@@ -1476,7 +1476,7 @@ struct LinuxHandling {
     static inline bool shouldReRaiseSignal{true};
 
     [[noreturn]] static void reRaiseSignal(int sig) noexcept {
-        struct sigaction sa {};
+        struct sigaction sa{};
         sa.sa_handler = SIG_DFL;
         sigemptyset(&sa.sa_mask);
         sa.sa_flags = 0;
@@ -1699,7 +1699,7 @@ struct LinuxHandling {
     [[noreturn]] static void commonActions(std::size_t offset, bool printToStderr, bool writeReport,
                                            const std::optional<cpptrace::object_trace>& customTrace,
                                            bool resolveTrace) noexcept {
-        struct sigaction sa {};
+        struct sigaction sa{};
         sigfillset(&sa.sa_mask);
         sa.sa_handler = LinuxHandling::popUpAndExit;
         sigemptyset(&sa.sa_mask);
@@ -1771,7 +1771,7 @@ struct LinuxHandling {
         sigaltstack(&LinuxHandling::gAltstack, nullptr);
 
         // Signal handlers
-        struct sigaction sa {};
+        struct sigaction sa{};
         sa.sa_sigaction = LinuxHandling::linuxSignalHandler;
         sigemptyset(&sa.sa_mask);
         sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
@@ -2002,9 +2002,9 @@ struct TerminateHandling {
                                      settings.showPopUp, _internal::config.resolveNonSignalTrace);
 #else
         constexpr int kTerminateCode{3};
-        WindowsHandling::fromTerminate(message, details, kTerminateCode, printToStderr, writeReport,
-                                       std::move(customTrace), showPopUp,
-                                       _internal::config.resolveNonSignalTrace);
+        WindowsHandling::fromTerminate(message, details, kTerminateCode, settings.printToStdErr,
+                                       settings.writeReport, std::move(customTrace),
+                                       settings.showPopUp, _internal::config.resolveNonSignalTrace);
 #endif
         FAULT_UNREACHABLE();
     }
