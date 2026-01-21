@@ -1,4 +1,6 @@
 #include "fault/attributes.h"
+
+#include <csignal>
 #define BOOST_TEST_MODULE ProcessCrashTests
 #include <chrono>
 #include <cstdint>
@@ -52,14 +54,27 @@ enum class AbstractFault : std::uint8_t {
     FAULT_UNREACHABLE();
 }
 
+[[nodiscard]] std::string formatVector(const std::vector<std::string>& v) {
+    std::string result = "[";
+    for (size_t i = 0; i < v.size(); ++i) {
+        result += std::format("{}", v[i]);
+        if (i + 1 < v.size()) {
+            result += ", ";
+        }
+    }
+    result += "]";
+    return result;
+}
+
 struct TestCase {
-    std::string arg;
+    std::vector<std::string> args;
 
     AbstractFault fault;
     std::function<bool(const std::string&)> evalStderrOverride{nullptr};
 
     [[nodiscard]] std::string print() const {
-        return std::format("Test: injecting fault '{}', with arg '{}'", faultToStr(fault), arg);
+        return std::format("Test: injecting fault '{}', with args '{}'", faultToStr(fault),
+                           formatVector(args));
     }
 };
 
@@ -67,13 +82,17 @@ struct ProcessFixture {
     boost::asio::io_context ctx;
     boost::filesystem::path exePath;
 
-    ProcessFixture() {
+    ProcessFixture() : exePath{CRASH_TARGET_PATH} {
         ProcessFixture::removeLogs();
-        exePath = boost::process::environment::find_executable(CRASH_TARGET_PATH);
+        // boost::process::environment::find_executable(CRASH_TARGET_PATH);
         if (exePath.empty()) {
             BOOST_FAIL("Could not find executable: " << CRASH_TARGET_PATH);
         }
     }
+    ProcessFixture(const ProcessFixture&) = delete;
+    ProcessFixture& operator=(const ProcessFixture&) = delete;
+    ProcessFixture(ProcessFixture&&) = delete;
+    ProcessFixture& operator=(ProcessFixture&&) = delete;
     ~ProcessFixture() {
         ProcessFixture::removeLogs();
     }
@@ -92,15 +111,59 @@ struct ProcessFixture {
 BOOST_FIXTURE_TEST_SUITE(CrashTestSuite, ProcessFixture)
 
 [[nodiscard]] bool checkCommonErrMessage(std::string_view s) {
+#if defined(__linux__)
+    static constexpr std::array<std::string_view, 7> kExpectedKeywords{
+        {"FAULT REPORT", fault::kDefaultErrorMessage, "Fault Date", "Fault Time", "Unix Epoch",
+         "Uptime", "FAULT END"}};
+#elif defined(_WIN32)
     static constexpr std::array<std::string_view, 8> kExpectedKeywords{
         {"FAULT REPORT", fault::kDefaultErrorMessage, "Description: ", "Fault Date", "Fault Time",
          "Unix Epoch", "Uptime", "FAULT END"}};
+#endif
     return std::ranges::all_of(kExpectedKeywords, [&s](const auto& keyword) {
         return s.find(keyword) != std::string_view::npos;
     });
 }
 
-#if defined(_WIN32)
+#if defined(__linux__)
+
+constexpr auto kFaultToKeyword = [](AbstractFault fault) -> std::vector<std::string_view> {
+    switch (fault) {
+        case AbstractFault::kSegmentationFault:
+        case AbstractFault::kOverflow:
+            return {"Signal Event: SIGSEGV", "Reason: ", "Fault address: "};
+        case AbstractFault::kStdTerminate:
+            return {"Terminate"};
+        case AbstractFault::kPanic:
+            return {};
+        case AbstractFault::kAssertionFailure:
+            return {"Assertion failed"};
+        case AbstractFault::kAbort:
+            return {"Signal Event: SIGABRT", "Reason: SIGNAL_UNKNOWN", "Fault address: "};
+    }
+    FAULT_UNREACHABLE();
+};
+
+[[nodiscard]] bool checkErrMsgPosix(std::string_view s, AbstractFault fault) noexcept {
+    const auto keywords = kFaultToKeyword(fault);
+    return std::ranges::all_of(
+        keywords, [s](const auto& keyword) { return s.find(keyword) != std::string_view::npos; });
+}
+
+[[nodiscard]] int faultToCodePosix(AbstractFault fault, bool withReRaise = true) noexcept {
+    switch (fault) {
+        case AbstractFault::kSegmentationFault:
+        case AbstractFault::kOverflow:
+            return SIGSEGV + (withReRaise ? 0 : 128);
+        case AbstractFault::kAbort:
+        case AbstractFault::kStdTerminate:
+        case AbstractFault::kAssertionFailure:
+        case AbstractFault::kPanic:
+            return SIGABRT + (withReRaise ? 0 : 128);
+    }
+}
+
+#elif defined(_WIN32)
 constexpr auto kCodeToStr = [](DWORD code) -> std::string_view {
     switch (code) {
         case EXCEPTION_ACCESS_VIOLATION:
@@ -165,19 +228,6 @@ constexpr auto kFaultToKeyword = [](AbstractFault fault) -> std::vector<std::str
     FAULT_UNREACHABLE();
 }
 
-#else
-
-[[nodiscard]] bool checkErrMsgPosix(std::string_view s, AbstractFault fault) noexcept {
-    return true;
-}
-
-[[nodiscard]] int faultToCodePosix(AbstractFault fault) noexcept {
-    switch (fault) {
-        case AbstractFault::kSegmentationFault:
-            return 139;
-    }
-}
-
 #endif
 
 [[nodiscard]] bool checkErrMsg(std::string_view s, AbstractFault fault) noexcept {
@@ -188,24 +238,35 @@ constexpr auto kFaultToKeyword = [](AbstractFault fault) -> std::vector<std::str
 #endif
 }
 
-[[nodiscard]] int faultToCode(AbstractFault fault) noexcept {
+[[nodiscard]] int faultToCode(AbstractFault fault, bool withReRaise = true) noexcept {
 #if defined(_WIN32)
     return faultToCodeWin(fault);
 #else
-    return faultToCodePosix(fault);
+    return faultToCodePosix(fault, withReRaise);
 #endif
 }
 
 BOOST_AUTO_TEST_CASE(ExecuteTestCases) {
     try {
         const std::vector<TestCase> testCases = {
-            {.arg = "segfault", .fault = AbstractFault::kSegmentationFault},
-            {.arg = "overflow", .fault = AbstractFault::kOverflow},
-            {.arg = "throw", .fault = AbstractFault::kStdTerminate},
-            {.arg = "terminate", .fault = AbstractFault::kStdTerminate},
-            {.arg = "abort", .fault = AbstractFault::kAbort},
-            {.arg = "panic", .fault = AbstractFault::kPanic},
-            {.arg = "assertion_failure", .fault = AbstractFault::kAssertionFailure}};
+            {.args = {"--mode", "segfault"}, .fault = AbstractFault::kSegmentationFault},
+            {.args = {"--mode", "overflow"}, .fault = AbstractFault::kOverflow},
+            {.args = {"--mode", "throw"}, .fault = AbstractFault::kStdTerminate},
+            {.args = {"--mode", "terminate"}, .fault = AbstractFault::kStdTerminate},
+            {.args = {"--mode", "abort"}, .fault = AbstractFault::kAbort},
+            {.args = {"--mode", "panic"}, .fault = AbstractFault::kPanic},
+            {.args = {"--mode", "panic", "--message", "This shouldn't have happened"},
+             .fault = AbstractFault::kPanic,
+             .evalStderrOverride =
+                 [](const std::string& err) {
+                     return err.find("This shouldn't have happened") != std::string::npos;
+                 }},
+            {.args = {"--mode", "assertion_failure"}, .fault = AbstractFault::kAssertionFailure},
+            {.args = {"--mode", "try_catch_panic", "--message", "A runtime error has occured"},
+             .fault = AbstractFault::kPanic,
+             .evalStderrOverride = [](const std::string& err) {
+                 return err.find("A runtime error has occured") != std::string::npos;
+             }}};
 
         for (const auto& test : testCases) {
             BOOST_TEST_CONTEXT(test.print()) {
@@ -214,9 +275,9 @@ BOOST_AUTO_TEST_CASE(ExecuteTestCases) {
                 std::string buffer;
                 buffer.resize(4096);
 
-                boost::process::process proc(
-                    ctx, exePath, {"--mode", test.arg},
-                    boost::process::process_stdio{.in = nullptr, .out = {}, .err = errPipe});
+                auto proc = boost::process::process{
+                    ctx, exePath, test.args,
+                    boost::process::process_stdio{.in = nullptr, .out = {}, .err = errPipe}};
 
                 const std::function<void(boost::system::error_code, std::size_t)> do_read =
                     [&](boost::system::error_code ec, std::size_t len) {

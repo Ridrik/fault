@@ -4,6 +4,8 @@
 #include <boost/program_options.hpp>
 #include <fault/fault.hpp>
 
+#include "fault/core.hpp"
+
 namespace po = boost::program_options;
 
 namespace {
@@ -75,6 +77,9 @@ int main(int argc, char** argv) {  // NOLINT(bugprone-exception-escape)
     }
     if (mode == "assertion_failure") {
         FAULT_ASSERT(0, userMsg);
+    }
+    if (mode == "try_catch_panic") {
+        fault::try_catch([&] { throw std::runtime_error(userMsg); }, fault::CatchPolicy::kPanic);
     }
 
     std::cerr << "Unknown mode: " << mode << "\n";

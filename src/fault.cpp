@@ -504,51 +504,63 @@ std::mutex globalMutex;                                                // NOLINT
 bool invokeAndSave(const std::span<char> buf, std::size_t& offset) noexcept {
     bool anyInvoked{false};
     std::size_t called{0};
+    for (const auto& callback : std::ranges::reverse_view(threadCallbacks)) {
+        if (callback != nullptr) {
+            if (!anyInvoked) {
+                utils::safeAppend(buf.data(), offset, buf.size(),
+                                  "\nUser provided panic callback messages:\n");
+                anyInvoked = true;
+            }
+            std::string_view effectiveMsg{};
+            std::string str{};
 #if FAULT_EXCEPTIONS
-    try {
+            try {
 #endif
-        for (const auto& callback : std::ranges::reverse_view(threadCallbacks)) {
+                str = callback();
+                effectiveMsg = std::string_view{str.c_str(), str.size()};
+#if FAULT_EXCEPTIONS
+            } catch (...) {
+                effectiveMsg = "<Exception thrown on user callback>";
+            }
+#endif
+            utils::safeAppend(buf.data(), offset, buf.size(), "( Thread Local ) ");
+            utils::itoaSafeAppend(buf.data(), offset, buf.size(), 1 + called++);
+            utils::safeAppend(buf.data(), offset, buf.size(), ": ");
+            utils::safeAppend(buf.data(), offset, buf.size(), effectiveMsg.data(),
+                              effectiveMsg.size());
+            utils::safeAppend(buf.data(), offset, buf.size(), "\n");
+        }
+    }
+    {
+        std::lock_guard lock{globalMutex};
+        for (const auto& callback : std::ranges::reverse_view(globalCallbacks)) {
             if (callback != nullptr) {
-                const auto str = callback();
                 if (!anyInvoked) {
                     utils::safeAppend(buf.data(), offset, buf.size(),
                                       "\nUser provided panic callback messages:\n");
-                }
-                utils::safeAppend(buf.data(), offset, buf.size(), "( Thread Local ) ");
-                utils::itoaSafeAppend(buf.data(), offset, buf.size(), 1 + called++);
-                utils::safeAppend(buf.data(), offset, buf.size(), ": ");
-                utils::safeAppend(buf.data(), offset, buf.size(), str.c_str(), str.size());
-                utils::safeAppend(buf.data(), offset, buf.size(), "\n");
-                anyInvoked = true;
-            }
-        }
-        {
-            std::lock_guard lock{globalMutex};
-            for (const auto& callback : std::ranges::reverse_view(globalCallbacks)) {
-                if (callback != nullptr) {
-                    const auto str = callback();
-                    if (!anyInvoked) {
-                        utils::safeAppend(buf.data(), offset, buf.size(),
-                                          "\nUser provided panic callback messages:\n");
-                    }
-                    utils::safeAppend(buf.data(), offset, buf.size(), "(    GLOBAL    ) ");
-                    utils::itoaSafeAppend(buf.data(), offset, buf.size(), 1 + called++);
-                    utils::safeAppend(buf.data(), offset, buf.size(), ": ");
-                    utils::safeAppend(buf.data(), offset, buf.size(), str.c_str(), str.size());
-                    utils::safeAppend(buf.data(), offset, buf.size(), "\n");
                     anyInvoked = true;
                 }
+                std::string_view effectiveMsg{};
+                std::string str{};
+#if FAULT_EXCEPTIONS
+                try {
+#endif
+                    str = callback();
+                    effectiveMsg = std::string_view{str.c_str(), str.size()};
+#if FAULT_EXCEPTIONS
+                } catch (...) {
+                    effectiveMsg = "<Exception thrown on user callback>";
+                }
+#endif
+                utils::safeAppend(buf.data(), offset, buf.size(), "(    GLOBAL    ) ");
+                utils::itoaSafeAppend(buf.data(), offset, buf.size(), 1 + called++);
+                utils::safeAppend(buf.data(), offset, buf.size(), ": ");
+                utils::safeAppend(buf.data(), offset, buf.size(), effectiveMsg.data(),
+                                  effectiveMsg.size());
+                utils::safeAppend(buf.data(), offset, buf.size(), "\n");
             }
         }
-#if FAULT_EXCEPTIONS
-    } catch (...) {
-        utils::safeAppend(buf.data(), offset, buf.size(),
-                          "Note: Callback printing has been stopped due to an exception thrown "
-                          "while executing callback number ");
-        utils::itoaSafeAppend(buf.data(), offset, buf.size(), 1 + called);
-        utils::safeAppend(buf.data(), offset, buf.size(), "\n");
     }
-#endif
     return anyInvoked;
 }
 
@@ -680,9 +692,9 @@ static_assert(std::atomic<bool>::is_always_lock_free,
 
 #if defined(__linux__)
 std::array<char, 256> zenityPath{"/usr/bin/zenity"};    // NOLINT
-std::atomic<int> canReadZenityPath{1};                  // NOLINT
+std::atomic<bool> canReadZenityPath{true};              // NOLINT
 std::array<char, 256> kDialogPath{"/usr/bin/kdialog"};  // NOLINT
-std::atomic<int> canReadKDialogPath{1};                 // NOLINT
+std::atomic<bool> canReadKDialogPath{true};             // NOLINT
 #endif
 
 #if defined(_MSC_VER)
@@ -879,15 +891,15 @@ void showPopUp(const char* title, const char* message) noexcept {
                     MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND | MB_TOPMOST);
     }
 #else
-    if (ExitHandler::canReadZenityPath == 0 && ExitHandler::canReadKDialogPath == 0) {
+    if (!ExitHandler::canReadZenityPath && !ExitHandler::canReadKDialogPath) {
         return;
     }
     const pid_t pid = _Fork();  // Async signal safe.
     if (pid == 0) {
-        if (ExitHandler::canReadZenityPath != 0) {
+        if (ExitHandler::canReadZenityPath) {
             execl(ExitHandler::zenityPath.data(), "zenity", "--error", "--title", title,
                   "--no-markup", "--text", message, nullptr);
-        } else if (ExitHandler::canReadKDialogPath != 0) {
+        } else if (ExitHandler::canReadKDialogPath) {
             execl(ExitHandler::kDialogPath.data(), "kdialog", "--title", title, "--error", message,
                   nullptr);
         }
@@ -1740,12 +1752,12 @@ struct LinuxHandling {
     }
 
     static void setup(bool enableHandlers, bool enableShutdownRequest) noexcept {
-        ExitHandler::canReadZenityPath = 0;
-        ExitHandler::canReadZenityPath = static_cast<int>(findProgramInPath(
-            "zenity", ExitHandler::zenityPath.data(), ExitHandler::zenityPath.size()));
-        ExitHandler::canReadKDialogPath = 0;
-        ExitHandler::canReadKDialogPath = static_cast<int>(findProgramInPath(
-            "kdialog", ExitHandler::kDialogPath.data(), ExitHandler::kDialogPath.size()));
+        ExitHandler::canReadZenityPath = false;
+        ExitHandler::canReadZenityPath = findProgramInPath("zenity", ExitHandler::zenityPath.data(),
+                                                           ExitHandler::zenityPath.size());
+        ExitHandler::canReadKDialogPath = false;
+        ExitHandler::canReadKDialogPath = findProgramInPath(
+            "kdialog", ExitHandler::kDialogPath.data(), ExitHandler::kDialogPath.size());
         LinuxHandling::tryCount = 0;  // Explicit load
         if (!enableHandlers) {
             return;
@@ -1798,6 +1810,13 @@ struct LinuxHandling {
 }
 
 struct TerminateHandling {
+   public:
+    struct Settings {
+        bool writeReport{true};
+        bool printToStdErr{true};
+        bool showPopUp{true};
+    };
+
    private:
     static inline std::atomic<bool> hasBeenTriggered{
         false};  // Protection against multi threading calling std::terminate concurrently
@@ -1811,30 +1830,9 @@ struct TerminateHandling {
                TerminateHandling::hasBeenTriggered.compare_exchange_strong(expected, true);
     }
 
-    [[noreturn]] static void customTerminator() {
-        if (needsImmediateShutdown()) {  // Signal forked child has hit terminate condition
-            ExitHandler::shutdown();
-            FAULT_UNREACHABLE();
-        }
-        if (!TerminateHandling::shouldExecuteHandler()) {  // Another thread has been hit
-                                                           // with terminate or signal, wait for
-                                                           // it to exit the process
-            ExitHandler::parkThreadForever();
-            FAULT_UNREACHABLE();
-        }
-        std::array<char, 1024> userMessage{};
-        std::size_t msgOffset{};
-        std::array<char, 1024> details{};
-        std::size_t detailOffset{};
-        utils::safeAppend(details.data(), detailOffset, details.size(),
-                          "Reason: std::terminate triggered.\n");
-        cpptrace::object_trace trace{};
-        if (!utils::getSafeObjectTrace(trace)) {
-            trace = {};
-            utils::safeAppend(details.data(), detailOffset, details.size(),
-                              "Note: an internal error has occured while generating an object "
-                              "trace. Base trace won't be reported.\n");
-        }
+    static void retrieveCurrentException(const std::span<char> msg, std::size_t& msgOffset,
+                                         const std::span<char> detail,
+                                         std::size_t& detailOffset) noexcept {
 #if FAULT_EXCEPTIONS
         try {
             const std::exception_ptr exPtr =
@@ -1843,64 +1841,85 @@ struct TerminateHandling {
             if (exPtr) {
                 std::rethrow_exception(exPtr);
             } else {
-                utils::safeAppend(userMessage.data(), msgOffset, userMessage.size(),
-                                  "Terminate called.");
-                utils::safeAppend(details.data(), detailOffset, details.size(),
+                utils::safeAppend(msg.data(), msgOffset, msg.size(), "Terminate called.");
+                utils::safeAppend(detail.data(), detailOffset, detail.size(),
                                   "Terminate was reached without an active exception.\n");
             }
         } catch (const std::exception& e) {
-            utils::safeAppendFmt(userMessage.data(), msgOffset, userMessage.size(),
+            utils::safeAppendFmt(msg.data(), msgOffset, msg.size(),
                                  "Terminate called due to an unhandled exception: {}.", e.what());
-            utils::safeAppendFmt(details.data(), detailOffset, details.size(),
+            utils::safeAppendFmt(detail.data(), detailOffset, detail.size(),
                                  "Terminate called due to an unhandled exception.\n"
                                  "Type (mangled): {}\nMessage: {}\n",
                                  typeid(e).name(), e.what());
         } catch (...) {
-            utils::safeAppend(userMessage.data(), msgOffset, userMessage.size(),
+            utils::safeAppend(msg.data(), msgOffset, msg.size(),
                               "Terminate called due to an unhandled exception.");
             utils::safeAppend(
-                details.data(), detailOffset, details.size(),
+                detail.data(), detailOffset, detail.size(),
                 "Terminate called due to an unhandled exception of non-std::exception type.\n");
         }
 #else
-        utils::safeAppend(userMessage.data(), msgOffset, userMessage.size(), "Terminate called.");
-        utils::safeAppend(details.data(), detailOffset, details.size(),
+        utils::safeAppend(msg.data(), msgOffset, msg.size(), "Terminate called.");
+        utils::safeAppend(detail.data(), detailOffset, detail.size(),
                           "Terminate was reached. Exception type cannot be retrieved (Given 'No "
                           "Exception' flag).\n");
 #endif
-        checkCommonExceptions(userMessage, msgOffset, details, detailOffset, trace);
+    }
 
+    static void runTerminateHook(const std::span<char> msg, std::size_t& msgOffset,
+                                 const std::span<char> detail, std::size_t& detailOffset,
+                                 cpptrace::object_trace& trace) noexcept {
         if (TerminateHandling::terminateHook != nullptr) {
 #if FAULT_EXCEPTIONS
             try {
 #endif
                 v1::ObjectTrace faultTrace =
                     adapter::v1::from_cpptrace(trace).value_or(v1::ObjectTrace{});
-                TerminateHandling::terminateHook(std::string_view{userMessage.data(), msgOffset},
+                TerminateHandling::terminateHook(std::string_view{msg.data(), msgOffset},
                                                  faultTrace);
                 trace = adapter::v1::to_cpptrace(faultTrace).value_or(cpptrace::object_trace{});
 #if FAULT_EXCEPTIONS
             } catch (...) {
-                utils::safeAppend(details.data(), detailOffset, details.size(),
+                utils::safeAppend(detail.data(), detailOffset, detail.size(),
                                   "Note: user provided terminate hook incurred in an "
                                   "exception, and may not have "
                                   "been properly handled. This will not affect the report.\n");
             }
 #endif
         }
-        if (hasAnySignalBeenTriggered()) {
-            ExitHandler::parkThreadForever();
-            FAULT_UNREACHABLE();
-        }
-        constexpr bool kWriteReport{true};
-        TerminateHandling::controlledShutdown(std::string_view{userMessage.data(), msgOffset},
-                                              std::string_view{details.data(), detailOffset},
-                                              _internal::config.printMsgToStdErr, kWriteReport,
-                                              std::move(trace), _internal::config.showPopUp);
-        FAULT_UNREACHABLE();
     }
 
-   public:
+    [[nodiscard]] static cpptrace::object_trace retrieveTraceWithMsg(
+        const std::span<char> detail, std::size_t& detailOffset,
+        const v1::ObjectTrace* customTrace) noexcept {
+        cpptrace::object_trace cppObjTrace{};
+        bool generateTrace{customTrace == nullptr};
+        if (customTrace != nullptr) {
+            const auto& refCustomTrace = *customTrace;
+            if (refCustomTrace.frames.empty()) {
+                utils::safeAppend(detail.data(), detailOffset, detail.size(),
+                                  "Note: user provided empty trace. Generating a default one.\n");
+                generateTrace = true;
+            } else if (auto optAdaptTrace = adapter::to_cpptrace(*customTrace);
+                       !optAdaptTrace.has_value()) {
+                utils::safeAppend(detail.data(), detailOffset, detail.size(),
+                                  "Note: Internal error on user provided trace. "
+                                  "Generating a default one.\n");
+                generateTrace = true;
+            } else {
+                cppObjTrace = std::move(optAdaptTrace).value();
+            }
+        }
+        if (generateTrace && !utils::getSafeObjectTrace(cppObjTrace)) {
+            cppObjTrace = {};
+            utils::safeAppend(detail.data(), detailOffset, detail.size(),
+                              "Note: an internal error has occured while generating an object "
+                              "trace. Base trace won't be reported.\n");
+        }
+        return cppObjTrace;
+    }
+
     // Appends messages and traces for uncaught exceptions and for user saved traces/exceptions
     static void checkCommonExceptions([[maybe_unused]] const std::span<char> msg,
                                       [[maybe_unused]] std::size_t& msgOffset,
@@ -1974,14 +1993,13 @@ struct TerminateHandling {
         return hasAnySignalBeenTriggered() || TerminateHandling::hasBeenTriggered;
     }
     [[noreturn]] static void controlledShutdown(std::string_view message, std::string_view details,
-                                                bool printToStderr, bool writeReport,
-                                                cpptrace::object_trace&& customTrace,
-                                                bool showPopUp) noexcept {
+                                                const Settings& settings,
+                                                cpptrace::object_trace&& customTrace) noexcept {
 #if defined(__linux__)
         constexpr int kTerminateCode{SIGABRT};
-        LinuxHandling::fromTerminate(message, details, kTerminateCode, printToStderr, writeReport,
-                                     std::move(customTrace), showPopUp,
-                                     _internal::config.resolveNonSignalTrace);
+        LinuxHandling::fromTerminate(message, details, kTerminateCode, settings.printToStdErr,
+                                     settings.writeReport, std::move(customTrace),
+                                     settings.showPopUp, _internal::config.resolveNonSignalTrace);
 #else
         constexpr int kTerminateCode{3};
         WindowsHandling::fromTerminate(message, details, kTerminateCode, printToStderr, writeReport,
@@ -1989,6 +2007,73 @@ struct TerminateHandling {
                                        _internal::config.resolveNonSignalTrace);
 #endif
         FAULT_UNREACHABLE();
+    }
+
+    [[noreturn]] static void customTerminator() {
+        if (needsImmediateShutdown()) {  // Signal forked child has hit terminate condition
+            ExitHandler::shutdown();
+            FAULT_UNREACHABLE();
+        }
+        if (!TerminateHandling::shouldExecuteHandler()) {  // Another thread has been hit
+                                                           // with terminate or signal, wait for
+                                                           // it to exit the process
+            ExitHandler::parkThreadForever();
+            FAULT_UNREACHABLE();
+        }
+        const std::optional<std::string_view> startMsg{std::nullopt};
+        constexpr v1::ObjectTrace* kTrace{nullptr};
+        TerminateHandling::terminateImpl(
+            startMsg, Type::kStdTerminate,
+            Settings{.writeReport = true,
+                     .printToStdErr = _internal::config.printMsgToStdErr,
+                     .showPopUp = _internal::config.showPopUp},
+            kTrace);
+        FAULT_UNREACHABLE();
+    }
+
+   public:
+    enum class Type : std::uint8_t { kStdTerminate, kPanic };
+
+    static void terminateImpl(std::optional<std::string_view> startMsg, Type type,
+                              const Settings& settings,
+                              const v1::ObjectTrace* customTrace) noexcept {
+        std::array<char, 1024> userMessage{};
+        std::array<char, 2048> details{};
+        std::size_t msgOffset{};
+        std::size_t detailOffset{};
+        utils::safeAppend(details.data(), detailOffset, details.size(),
+                          type == Type::kStdTerminate ? "Reason: std::terminate triggered.\n"
+                                                      : "Reason: panic triggered.\n");
+
+        if (startMsg.has_value()) {
+            const auto& startMsgVal = *startMsg;
+            if (!startMsgVal.empty()) {
+                utils::safeAppend(userMessage.data(), msgOffset, userMessage.size(),
+                                  startMsgVal.data(), startMsgVal.size());
+            } else {
+                utils::safeAppend(userMessage.data(), msgOffset, userMessage.size(),
+                                  "<no message>");
+            }
+        }
+        auto cppObjTrace =
+            TerminateHandling::retrieveTraceWithMsg(details, detailOffset, customTrace);
+        if (type == Type::kStdTerminate) {
+            TerminateHandling::retrieveCurrentException(userMessage, msgOffset, details,
+                                                        detailOffset);
+        }
+        TerminateHandling::checkCommonExceptions(userMessage, msgOffset, details, detailOffset,
+                                                 cppObjTrace);
+        if (type == Type::kStdTerminate) {
+            TerminateHandling::runTerminateHook(userMessage, msgOffset, details, detailOffset,
+                                                cppObjTrace);
+        }
+        if (hasAnySignalBeenTriggered()) {
+            ExitHandler::parkThreadForever();
+            FAULT_UNREACHABLE();
+        }
+        TerminateHandling::controlledShutdown(std::string_view{userMessage.data(), msgOffset},
+                                              std::string_view{details.data(), detailOffset},
+                                              settings, std::move(cppObjTrace));
     }
 
     static void setup() noexcept {
@@ -2087,50 +2172,12 @@ void save_traced_exception(std::string_view msg, const ObjectTrace* customTrace)
 }
 
 void panic_impl(std::string_view message, const ObjectTrace* customTrace) noexcept {
-    std::array<char, 1024> msgBuffer{};
-    std::size_t msgOffset{0};
-    std::array<char, 1024> detailBuffer{};
-    std::size_t detailOffset{0};
-    utils::safeAppend(detailBuffer.data(), detailOffset, detailBuffer.size(),
-                      "Reason: panic triggered.\n");
-
-    cpptrace::object_trace cppObjTrace{};
-    bool generateTrace{customTrace == nullptr};
-    if (customTrace != nullptr) {
-        const auto& refCustomTrace = *customTrace;
-        if (refCustomTrace.frames.empty()) {
-            utils::safeAppend(detailBuffer.data(), detailOffset, detailBuffer.size(),
-                              "Note: user provided empty trace. Generating a default one.\n");
-            generateTrace = true;
-        } else if (auto optAdaptTrace = adapter::to_cpptrace(*customTrace);
-                   !optAdaptTrace.has_value()) {
-            utils::safeAppend(detailBuffer.data(), detailOffset, detailBuffer.size(),
-                              "Note: Internal error on user provided trace. "
-                              "Generating a default one.\n");
-            generateTrace = true;
-        } else {
-            cppObjTrace = std::move(optAdaptTrace).value();
-        }
-    }
-    if (generateTrace && !utils::getSafeObjectTrace(cppObjTrace)) {
-        cppObjTrace = {};
-        utils::safeAppend(detailBuffer.data(), detailOffset, detailBuffer.size(),
-                          "Note: internal error on generating object "
-                          "trace. Base trace won't be reported.\n");
-    }
-    if (!message.empty()) {
-        utils::safeAppend(msgBuffer.data(), msgOffset, msgBuffer.size(), message.data(),
-                          message.size());
-    } else {
-        utils::safeAppend(msgBuffer.data(), msgOffset, msgBuffer.size(), "<no message>");
-    }
-    TerminateHandling::checkCommonExceptions(std::span{msgBuffer}, msgOffset,
-                                             std::span{detailBuffer}, detailOffset, cppObjTrace);
-    TerminateHandling::controlledShutdown(
-        std::string_view{msgBuffer.data(), msgOffset},
-        std::string_view{detailBuffer.data(), detailOffset},
-        _internal::config.panic.printMsgToStdErr, _internal::config.panic.writeReport,
-        std::move(cppObjTrace), _internal::config.panic.showPopUp);
+    TerminateHandling::terminateImpl(
+        std::optional(message), TerminateHandling::Type::kPanic,
+        TerminateHandling::Settings{.writeReport = _internal::config.panic.writeReport,
+                                    .printToStdErr = _internal::config.panic.printMsgToStdErr,
+                                    .showPopUp = _internal::config.panic.showPopUp},
+        customTrace);
     FAULT_UNREACHABLE();
 }
 
