@@ -178,7 +178,7 @@ void getNowSafe(std::int64_t& outSec, std::int64_t& outNsec) noexcept {
     outSec = static_cast<std::int64_t>((uli.QuadPart / 10000000ULL) - kUnixOffset);
     outNsec = static_cast<std::int64_t>(((uli.QuadPart % 10000000ULL) * 100));
 #else
-    struct timespec ts{};
+    struct timespec ts {};
     clock_gettime(CLOCK_REALTIME, &ts);
     outSec = ts.tv_sec;
     outNsec = ts.tv_nsec;
@@ -451,7 +451,7 @@ void saveException(std::string_view msg, const v1::ObjectTrace* customTrace) noe
     cpptrace::object_trace trace{};
     bool generateTrace{customTrace == nullptr};
     if (customTrace != nullptr) {
-        auto optCustomTrace = adapter::to_cpptrace(*customTrace);
+        auto optCustomTrace = adapter::v1::to_cpptrace(*customTrace);
         if (!optCustomTrace.has_value()) {
             generateTrace = true;
         } else {
@@ -1464,7 +1464,7 @@ struct LinuxHandling {
     static inline bool shouldReRaiseSignal{true};
 
     [[noreturn]] static void reRaiseSignal(int sig) noexcept {
-        struct sigaction sa{};
+        struct sigaction sa {};
         sa.sa_handler = SIG_DFL;
         sigemptyset(&sa.sa_mask);
         sa.sa_flags = 0;
@@ -1687,7 +1687,7 @@ struct LinuxHandling {
     [[noreturn]] static void commonActions(std::size_t offset, bool printToStderr, bool writeReport,
                                            const std::optional<cpptrace::object_trace>& customTrace,
                                            bool resolveTrace) noexcept {
-        struct sigaction sa{};
+        struct sigaction sa {};
         sigfillset(&sa.sa_mask);
         sa.sa_handler = LinuxHandling::popUpAndExit;
         sigemptyset(&sa.sa_mask);
@@ -1719,8 +1719,8 @@ struct LinuxHandling {
 
     [[noreturn]] static void fromTerminate(std::string_view msg, std::string_view details, int code,
                                            bool printToStderr, bool writeReport,
-                                           const cpptrace::object_trace& customTrace,
-                                           bool showPopUp, bool resolveTrace) noexcept {
+                                           cpptrace::object_trace&& customTrace, bool showPopUp,
+                                           bool resolveTrace) noexcept {
         LinuxHandling::checkPermissions();
         LinuxHandling::signal = code;
         LinuxHandling::showPopUp = showPopUp;
@@ -1734,7 +1734,8 @@ struct LinuxHandling {
             utils::safeAppend(LinuxHandling::finalBuffer.data(), offset,
                               LinuxHandling::finalBuffer.size(), details.data(), details.size());
         }
-        LinuxHandling::commonActions(offset, printToStderr, writeReport, customTrace, resolveTrace);
+        LinuxHandling::commonActions(offset, printToStderr, writeReport,
+                                     std::optional(std::move(customTrace)), resolveTrace);
         FAULT_UNREACHABLE();
     }
 
@@ -1758,7 +1759,7 @@ struct LinuxHandling {
         sigaltstack(&LinuxHandling::gAltstack, nullptr);
 
         // Signal handlers
-        struct sigaction sa{};
+        struct sigaction sa {};
         sa.sa_sigaction = LinuxHandling::linuxSignalHandler;
         sigemptyset(&sa.sa_mask);
         sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
@@ -1873,10 +1874,11 @@ struct TerminateHandling {
 #if FAULT_EXCEPTIONS
             try {
 #endif
-                v1::ObjectTrace faultTrace = adapter::v1::from_cpptrace(trace).value_or({});
+                v1::ObjectTrace faultTrace =
+                    adapter::v1::from_cpptrace(trace).value_or(v1::ObjectTrace{});
                 TerminateHandling::terminateHook(std::string_view{userMessage.data(), msgOffset},
                                                  faultTrace);
-                trace = adapter::to_cpptrace(faultTrace).value_or({});
+                trace = adapter::v1::to_cpptrace(faultTrace).value_or(cpptrace::object_trace{});
 #if FAULT_EXCEPTIONS
             } catch (...) {
                 utils::safeAppend(details.data(), detailOffset, details.size(),
@@ -1978,7 +1980,7 @@ struct TerminateHandling {
 #if defined(__linux__)
         constexpr int kTerminateCode{SIGABRT};
         LinuxHandling::fromTerminate(message, details, kTerminateCode, printToStderr, writeReport,
-                                     customTrace, showPopUp,
+                                     std::move(customTrace), showPopUp,
                                      _internal::config.resolveNonSignalTrace);
 #else
         constexpr int kTerminateCode{3};
@@ -2185,7 +2187,7 @@ void try_catch(
         } else if (!utils::getSafeObjectTrace(cppObjTrace)) {
             cppObjTrace = {};
         }
-        const auto objectTrace = fault::adapter::from_cpptrace(cppObjTrace).value_or({});
+        const auto objectTrace = fault::adapter::from_cpptrace(cppObjTrace).value_or(ObjectTrace{});
         auto effectiveMsg = msg;
         try {
             std::string userMsg;
