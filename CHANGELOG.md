@@ -1,3 +1,8 @@
+## v0.4.2 - January 2026
+### Updated
+- Small code refactor to better unify panic with terminate handling
+- Improved master/target testing
+
 ## v0.4.1 - January 2026
 ### Updated
 - Enforced `noexcept` on all `panic` functions
