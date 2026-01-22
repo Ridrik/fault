@@ -73,7 +73,7 @@ Add this to your `CMakeLists.txt` to integrate `fault` directly into your projec
 include(FetchContent)
 FetchContent_Declare(
     fault
-    GIT_REPOSITORY [https://github.com/Ridrik/fault.git](https://github.com/Ridrik/fault.git)
+    GIT_REPOSITORY [https://github.com/Ridrik/fault.git](https://github.com/Ridrik/fault.git) # or, via codeberg: https://codeberg.org/ridrik/fault.git
     GIT_TAG v0.4.1
 )
 FetchContent_MakeAvailable(fault)
