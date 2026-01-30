@@ -82,7 +82,7 @@ if(WIN32)
     target_compile_definitions(fault PRIVATE NOMINMAX) # prevent Windows min/max macros
 endif()
 
-target_link_libraries(fault PRIVATE SYSTEM cpptrace::cpptrace)
+target_link_libraries(fault PRIVATE cpptrace::cpptrace)
 
 set(FAULT_LOCATIONS "DEFAULT" CACHE STRING "fault source location metadata for fault::expect(): ON, OFF, or DEFAULT(OFF on non-debug/NDEBUG)")
 
