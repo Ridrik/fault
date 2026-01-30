@@ -9,7 +9,7 @@ endif()
 set(PREV_SCAN_SETTING ${CMAKE_CXX_SCAN_FOR_MODULES})
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 FetchContent_Declare(
-  cpptrace
+  cpptrace SYSTEM
   GIT_REPOSITORY https://github.com/jeremy-rifkin/cpptrace.git
   GIT_TAG        ${FAULT_CPPTRACE_TAG} 
 )

@@ -1,3 +1,85 @@
+## v0.5.0 - January 2026
+## Added
+- `UnwindGuard`, `UnwindGuardAt`, `FAULT_DEBUG_UNWIND_GUARD` and `FAULT_DEBUG_UNWIND_GUARD_AT`- Unwind guards are execution guards that trigger if an unwind process occurs on such object, i.e if an exception is threwn within a try/catch block. It does 2 things: execute arbitrary user functions, meaning it can be used as a 'scoped failure' feature; return a string that is saved on `fault` global context, which can then be logged to the report, if the user later panics or if `std::terminate` is hit.
+   This feature complements `PanicGuard`, which is used instead to provide context guard against panic (including assertion failures).
+   When to use it? It's recommended to use it for non-hot paths, in which an unwind implies fatal context in your application. For instance, any try/catch in which you'd be inclined to terminate your application in a catch block, is an appealing situation to have such guards in important sections of your code. Again, just like `cpptrace` within `fault` can provide traces from exceptions, `UnwindGuard` can provide human readable and state context of your application to the report.
+   **Note**: After you catch an exception that included `UnwindGuard`s, if you do not wish to terminate the application, you may clear `fault` global report buffer by calling `fault::UnwindGuard::resetBuffer()`.
+- `FailGuard`, ` FailGuardAt`, `FAULT_DEBUG_FAIL_GUARD` and `FAULT_DEBUG_FAIL_GUARD_AT` - provides an **unified guard** against both **unwind, panic or std::terminate**. This will usually be the prefered option for uses that already want to use UnwindGuard. If, instead, the context is such that throwing shouldn't warrant a program abnormal failure, you may use `PanicGuard` instead.
+
+Example:
+
+```cpp
+namespace {
+
+void processFile() {
+    throw std::runtime_error("Failed to open file!");
+}
+
+void bar() {
+    fault::UnwindGuardAt hook{[] -> std::string { return "Entered bar..."; }};
+
+    FAULT_DEBUG_FAIL([] -> std::string { return "Calling processFile..."; });
+    processFile();
+}
+
+void foo() {
+    fault::FailGuardAt guard{[]() -> std::string { return "Fail guard, with location"; },
+                             fault::HookScope::kThreadLocal};
+    fault::UnwindGuardAt guard2{[]() -> std::string { return "Unwind guard, with location"; }};
+    fault::PanicGuard hook{[] -> std::string { return "Calling bar..."; },
+                           fault::HookScope::kGlobal};
+    bar();
+}
+
+}  // namespace
+
+int main() {
+    // Initialize global crash handlers (Signals, SEH, and Terminate)
+    if (!fault::init({.appName = "MyApp",
+                      .buildID = "MyBuildID",
+                      .crashDir = "crash",
+                      .useUnsafeStacktraceOnSignalFallback = true,
+                      .generateMiniDumpWindows = true})) {
+        std::cerr << "Failed to initialize fault.\n";
+        return EXIT_FAILURE;
+    }
+    fault::FailGuardAt hook{[] -> std::string { return "Fault guard with location"; },
+                            fault::HookScope::kGlobal};
+    FAULT_DEBUG_GUARD_AT([]() -> std::string { return "Entering try/catch"; });
+    try {
+        fault::FailGuardAt guard{[]() -> std::string { return "Calling foo..."; }};
+        foo();
+    } catch (const std::exception& e) {
+        fault::panic("Caught exception: {}", e.what());
+    }
+
+    return 0;
+}
+```
+
+Will include the following output in the report:
+
+```
+(...)
+
+Technical comments: Reason: panic triggered.
+
+User provided unwind callback messages:
+1: Calling processFile...
+2: Entered bar... @ /mnt/c/Codes/fault/tests/test_hook_guard.cpp:24 (void {anonymous}::bar())
+3: Unwind guard, with location @ /mnt/c/Codes/fault/tests/test_hook_guard.cpp:33 (void {anonymous}::foo())
+4: Fail guard, with location @ /mnt/c/Codes/fault/tests/test_hook_guard.cpp:32 (void {anonymous}::foo())
+5: Calling foo... @ /mnt/c/Codes/fault/tests/test_hook_guard.cpp:55 (int main())
+
+
+User provided panic/fail callback messages:
+( Thread Local ) 1: Entering try/catch @ /mnt/c/Codes/fault/tests/test_hook_guard.cpp:53 (int main())
+(    GLOBAL    ) 2: Fault guard with location @ /mnt/c/Codes/fault/tests/test_hook_guard.cpp:52 (int main())
+
+(...)
+
+```
+
 ## v0.4.2 - January 2026
 ### Updated
 - Small code refactor to better unify panic with terminate handling

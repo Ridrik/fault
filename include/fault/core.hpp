@@ -56,6 +56,9 @@
 
 #include "fault/config.h"
 
+#define CONCAT_INNER(a, b) a##b
+#define CONCAT(a, b) CONCAT_INNER(a, b)
+
 #undef FAULT_EXPECT_AT_IMPL
 #undef FAULT_EXPECT_IMPL
 #undef FAULT_VERIFY_IMPL
@@ -64,6 +67,11 @@
 #undef FAULT_EXPECT_IMPL_V1
 #undef FAULT_VERIFY_IMPL_V1
 #undef FAULT_DEBUG_GUARD_V1
+#undef FAULT_DEBUG_GUARD_AT_V1
+#undef FAULT_DEBUG_UNWIND_V1
+#undef FAULT_DEBUG_UNWIND__AT_V1
+#undef FAULT_DEBUG_FAIL_V1
+#undef FAULT_DEBUG_FAIL_AT_V1
 
 #define FAULT_EXPECT_AT_IMPL_V1(cond, ...) \
     ::fault::v1::panic_at(#cond, std::source_location::current() __VA_OPT__(, ) __VA_ARGS__)
@@ -77,9 +85,23 @@
 #endif
 
 #if FAULT_ASSERT_ACTIVE
-#define FAULT_DEBUG_GUARD_V1(hook, scope) fault::v1::PanicGuard(hook, scope)
+#define FAULT_DEBUG_GUARD_V1(hook, ...) \
+    auto CONCAT(temp_, __LINE__) = fault::v1::PanicGuard(hook __VA_OPT__(, ) __VA_ARGS__)
+#define FAULT_DEBUG_GUARD_AT_V1(hook, ...) \
+    auto CONCAT(temp_, __LINE__) = fault::v1::PanicGuardAt(hook __VA_OPT__(, ) __VA_ARGS__)
+#define FAULT_DEBUG_UNWIND_V1(hook) auto CONCAT(temp_, __LINE__) = fault::v1::UnwindGuard(hook)
+#define FAULT_DEBUG_UNWIND_AT_V1(hook) auto CONCAT(temp_, __LINE__) = fault::v1::UnwindGuardAt(hook)
+#define FAULT_DEBUG_FAIL_V1(hook, ...) \
+    auto CONCAT(temp_, __LINE__) = fault::v1::FailGuard(hook __VA_OPT__(, ) __VA_ARGS__)
+#define FAULT_DEBUG_FAIL_AT_V1(hook, ...) \
+    auto CONCAT(temp_, __LINE__) = fault::v1::FailGuardAt(hook __VA_OPT__(, ) __VA_ARGS__)
 #else
-#define FAULT_DEBUG_GUARD_V1(hook, scope) ((void)0)
+#define FAULT_DEBUG_GUARD_V1(hook, ...) ((void)0)
+#define FAULT_DEBUG_GUARD_AT_V1(hook, ...) ((void)0)
+#define FAULT_DEBUG_UNWIND_V1(hook) ((void)0)
+#define FAULT_DEBUG_UNWIND_AT_V1(hook) ((void)0)
+#define FAULT_DEBUG_FAIL_V1(hook, ...) ((void)0)
+#define FAULT_DEBUG_FAIL_AT_V1(hook, ...) ((void)0)
 #endif
 
 #if FAULT_API_VERSION == 1
@@ -87,11 +109,21 @@
 #define FAULT_EXPECT_AT_IMPL FAULT_EXPECT_AT_IMPL_V1
 #define FAULT_EXPECT_IMPL FAULT_EXPECT_IMPL_V1
 #define FAULT_DEBUG_GUARD FAULT_DEBUG_GUARD_V1
+#define FAULT_DEBUG_GUARD_AT FAULT_DEBUG_GUARD_AT_V1
+#define FAULT_DEBUG_UNWIND FAULT_DEBUG_UNWIND_V1
+#define FAULT_DEBUG_UNWIND_AT FAULT_DEBUG_UNWIND_AT_V1
+#define FAULT_DEBUG_FAIL FAULT_DEBUG_FAIL_V1
+#define FAULT_DEBUG_FAIL_AT FAULT_DEBUG_FAIL_AT_V1
 #else
 #define FAULT_VERIFY_IMPL
 #define FAULT_EXPECT_AT_IMPL
 #define FAULT_EXPECT_IMPL
 #define FAULT_DEBUG_GUARD
+#define FAULT_DEBUG_GUARD_AT
+#define FAULT_DEBUG_UNWIND
+#define FAULT_DEBUG_UNWIND_AT
+#define FAULT_DEBUG_FAIL
+#define FAULT_DEBUG_FAIL_AT
 #endif
 
 #include <cstdint>
@@ -207,7 +239,7 @@ enum class HookScope : std::uint8_t { kThreadLocal, kGlobal };
  * releases it.
  *
  */
-struct FAULT_EXPORT PanicGuard {
+struct FAULT_EXPORT PanicGuardBase {
    public:
     /**
      * @brief Construct a new Panic Guard object
@@ -215,12 +247,13 @@ struct FAULT_EXPORT PanicGuard {
      * @param callback callback to be evoked on fault::panic or terminate (if installed)
      * @param scope scope in which it should be evoked. Defaults to thread local
      */
-    explicit PanicGuard(PanicHook callback, HookScope scope = HookScope::kThreadLocal);
-    ~PanicGuard() noexcept;
-    PanicGuard(const PanicGuard&) = delete;
-    PanicGuard& operator=(const PanicGuard&) = delete;
-    PanicGuard(PanicGuard&&) = delete;
-    PanicGuard& operator=(PanicGuard&&) = delete;
+    explicit PanicGuardBase(PanicHook callback, HookScope scope = HookScope::kThreadLocal,
+                            const std::optional<std::source_location>& loc = std::nullopt);
+    ~PanicGuardBase() noexcept;
+    PanicGuardBase(const PanicGuardBase&) = delete;
+    PanicGuardBase& operator=(const PanicGuardBase&) = delete;
+    PanicGuardBase(PanicGuardBase&&) = delete;
+    PanicGuardBase& operator=(PanicGuardBase&&) = delete;
 
     /**
      * @brief releases the guard's callback from registry, deactivating the guard as well
@@ -232,6 +265,128 @@ struct FAULT_EXPORT PanicGuard {
     std::size_t idx_{0};
     HookScope scope_;
     bool active_{false};
+};
+
+struct FAULT_EXPORT PanicGuard : public PanicGuardBase {
+   public:
+    explicit PanicGuard(PanicHook callback, HookScope scope = HookScope::kThreadLocal)
+        : PanicGuardBase{std::move(callback), scope, std::nullopt} {}
+};
+
+struct FAULT_EXPORT PanicGuardAt : public PanicGuardBase {
+   public:
+    explicit PanicGuardAt(PanicHook callback, HookScope scope = HookScope::kThreadLocal,
+                          std::source_location loc = std::source_location::current())
+        : PanicGuardBase{std::move(callback), scope, loc} {}
+};
+
+/**
+ * @brief Provides a wrapper for user callback in RAII-style mechanism, to be evoked if an exception
+ * is being subject to an unwind process during this object's destruction (i.e a throw
+ * inside a try/catch)
+ *
+ */
+struct FAULT_EXPORT UnwindGuardBase {
+   public:
+    /**
+     * @brief Construct a new Unwind Guard object
+     *
+     * @param callback callback to be evoked on unwind
+     * @param loc optional source location to be printed to report
+     */
+    explicit UnwindGuardBase(PanicHook callback,
+                             std::optional<std::source_location> loc = std::nullopt);
+    ~UnwindGuardBase() noexcept;
+    UnwindGuardBase(const UnwindGuardBase&) = delete;
+    UnwindGuardBase& operator=(const UnwindGuardBase&) = delete;
+    UnwindGuardBase(UnwindGuardBase&&) = delete;
+    UnwindGuardBase& operator=(UnwindGuardBase&&) = delete;
+
+    /**
+     * @brief releases the guard, deactivating its callback.
+     *
+     */
+    void release() noexcept;
+
+    /**
+     * @brief Resets fault global buffer on all unwind guard callback messages.
+     *
+     */
+    static void resetBuffer() noexcept;
+
+   private:
+    PanicHook callback_;
+    std::optional<std::source_location> sourceLoc_;
+    int uncaughtExps_;
+};
+
+struct FAULT_EXPORT UnwindGuard : public UnwindGuardBase {
+   public:
+    explicit UnwindGuard(PanicHook callback) : UnwindGuardBase{std::move(callback), std::nullopt} {}
+};
+
+struct FAULT_EXPORT UnwindGuardAt : public UnwindGuardBase {
+   public:
+    explicit UnwindGuardAt(PanicHook callback,
+                           std::source_location loc = std::source_location::current())
+        : UnwindGuardBase{std::move(callback), loc} {}
+};
+
+/**
+ * @brief Provides a wrapper for user callback in RAII-style mechanism, to be evoked if either an
+exception
+ * is being subject to an unwind process during this object's destruction (i.e a throw
+ * inside a try/catch), or if a panic or std::terminate is called while within scope of this object.
+ * This Guard can be seen as an unification of the PanicGuard and UnwindGuard
+ *
+ */
+struct FAULT_EXPORT FailGuardBase {
+   public:
+    /**
+     * @brief Construct a new Failure Guard object
+     *
+     * @param callback callback to be evoked on unwind or panic
+     * @param loc optional source location to be printed to report
+     */
+    explicit FailGuardBase(PanicHook callback, HookScope scope = HookScope::kThreadLocal,
+                           std::optional<std::source_location> loc = std::nullopt);
+    FailGuardBase(const FailGuardBase&) = delete;
+    FailGuardBase& operator=(const FailGuardBase&) = delete;
+    FailGuardBase(FailGuardBase&&) = delete;
+    FailGuardBase& operator=(FailGuardBase&&) = delete;
+
+    ~FailGuardBase() noexcept;
+
+    /**
+     * @brief releases the guard, deactivating its callback.
+     *
+     */
+    void release() noexcept;
+
+    /**
+     * @brief Resets fault global buffer on all unwind guard callback messages.
+     *
+     */
+    static void resetBuffer() noexcept;
+
+   private:
+    std::size_t idx_{0};
+    HookScope scope_;
+    int uncaughtExps_;
+    bool active_{false};
+};
+
+struct FAULT_EXPORT FailGuard : public FailGuardBase {
+   public:
+    explicit FailGuard(PanicHook callback, HookScope scope = HookScope::kThreadLocal)
+        : FailGuardBase{std::move(callback), scope, std::nullopt} {}
+};
+
+struct FAULT_EXPORT FailGuardAt : public FailGuardBase {
+   public:
+    explicit FailGuardAt(PanicHook callback, HookScope scope = HookScope::kThreadLocal,
+                         std::source_location loc = std::source_location::current())
+        : FailGuardBase{std::move(callback), scope, loc} {}
 };
 
 /**
