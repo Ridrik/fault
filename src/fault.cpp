@@ -65,9 +65,9 @@
 
 namespace fault {
 
-namespace utils {
-
 namespace {
+
+namespace utils {
 
 static_assert(std::atomic<bool>::is_always_lock_free,
               "std::atomic<bool> may not be lock free. Use volatile std::sig_atomic_t "
@@ -135,8 +135,8 @@ constexpr void safeAppend(char* buffer, std::size_t& offset, std::size_t capacit
     safeAppend(buffer, offset, capacity, buf.data(), 18);
 }
 
-void itoaSafeAppend(char* buffer, std::size_t& offset, std::size_t capacity,
-                    std::uint64_t value) noexcept {
+constexpr void itoaSafeAppend(char* buffer, std::size_t& offset, std::size_t capacity,
+                              std::uint64_t value) noexcept {
     if (offset >= capacity - 1) {
         return;
     }
@@ -160,6 +160,19 @@ void itoaSafeAppend(char* buffer, std::size_t& offset, std::size_t capacity,
     buffer[offset] = '\0';
 }
 
+constexpr void safeAppend(char* buffer, std::size_t& offset, std::size_t capacity,
+                          const std::source_location& loc) {
+    safeAppend(buffer, offset, capacity, " @ ");
+    safeAppend(buffer, offset, capacity, loc.file_name());
+    safeAppend(buffer, offset, capacity, ":");
+    itoaSafeAppend(buffer, offset, capacity, loc.line());
+    if (loc.function_name() != nullptr) {
+        safeAppend(buffer, offset, capacity, " (");
+        safeAppend(buffer, offset, capacity, loc.function_name());
+        safeAppend(buffer, offset, capacity, ")");
+    }
+}
+
 void fmt2d(char* buf, std::uint32_t val) noexcept {
     buf[0] = static_cast<char>((val / 10) + '0');
     buf[1] = static_cast<char>((val % 10) + '0');
@@ -178,7 +191,7 @@ void getNowSafe(std::int64_t& outSec, std::int64_t& outNsec) noexcept {
     outSec = static_cast<std::int64_t>((uli.QuadPart / 10000000ULL) - kUnixOffset);
     outNsec = static_cast<std::int64_t>(((uli.QuadPart % 10000000ULL) * 100));
 #else
-    struct timespec ts{};
+    struct timespec ts {};
     clock_gettime(CLOCK_REALTIME, &ts);
     outSec = ts.tv_sec;
     outNsec = ts.tv_nsec;
@@ -417,11 +430,7 @@ v1::ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fil
 #endif
 }
 
-}  // namespace
-
 }  // namespace utils
-
-namespace {
 
 namespace exceptions {
 
@@ -496,19 +505,124 @@ std::optional<std::string> rethrowAndAppendSavedExceptionTrace(
 
 namespace hook {
 
+struct CallbackWithLoc {
+    PanicHook f;
+    std::optional<std::source_location> loc;
+
+    void release() noexcept {
+        f = nullptr;
+        loc = std::nullopt;
+    }
+};
+
 constexpr std::size_t kMaxPanicHooks{16};
-thread_local std::array<PanicHook, kMaxPanicHooks> threadCallbacks{};  // NOLINT
-std::array<PanicHook, kMaxPanicHooks> globalCallbacks{};               // NOLINT
-std::mutex globalMutex;                                                // NOLINT
+thread_local std::array<CallbackWithLoc, kMaxPanicHooks> threadCallbacks{};  // NOLINT
+std::array<CallbackWithLoc, kMaxPanicHooks> globalCallbacks{};               // NOLINT
+
+struct {
+    std::array<char, 2048> buffer{};
+    std::size_t counter{0};
+    std::size_t offset{};
+} unWindStorage{};  // NOLINT
+
+std::mutex globalMutex;  // NOLINT
+
+void resetBuffer() noexcept {
+    std::lock_guard lock{globalMutex};
+    unWindStorage.counter = 0;
+    unWindStorage.offset = 0;
+    unWindStorage.buffer[0] = '\0';
+}
+
+void invokeAndSaveUnwind(const PanicHook& f,
+                         const std::optional<std::source_location>& loc = std::nullopt) noexcept {
+    std::lock_guard lock{hook::globalMutex};
+
+    utils::itoaSafeAppend(hook::unWindStorage.buffer.data(), hook::unWindStorage.offset,
+                          hook::unWindStorage.buffer.size(), 1 + unWindStorage.counter++);
+    utils::safeAppend(hook::unWindStorage.buffer.data(), hook::unWindStorage.offset,
+                      hook::unWindStorage.buffer.size(), ": ");
+#if FAULT_EXCEPTIONS
+    try {
+#endif
+        if (const auto str = f(); str.empty()) {
+            utils::safeAppend(hook::unWindStorage.buffer.data(), hook::unWindStorage.offset,
+                              hook::unWindStorage.buffer.size(), "<No message provided>");
+        } else {
+            utils::safeAppend(hook::unWindStorage.buffer.data(), hook::unWindStorage.offset,
+                              hook::unWindStorage.buffer.size(), str.c_str(), str.size());
+        }
+#if FAULT_EXCEPTIONS
+    } catch (...) {
+        utils::safeAppend(hook::unWindStorage.buffer.data(), hook::unWindStorage.offset,
+                          hook::unWindStorage.buffer.size(), "<Exception thrown on user callback>");
+    }
+#endif
+    if (loc.has_value()) {
+        utils::safeAppend(hook::unWindStorage.buffer.data(), hook::unWindStorage.offset,
+                          hook::unWindStorage.buffer.size(), *loc);
+    }
+    utils::safeAppend(hook::unWindStorage.buffer.data(), hook::unWindStorage.offset,
+                      hook::unWindStorage.buffer.size(), "\n");
+}
 
 bool invokeAndSave(const std::span<char> buf, std::size_t& offset) noexcept {
+    {
+        std::lock_guard lock{globalMutex};
+        if (hook::unWindStorage.offset > 0) {
+            utils::safeAppend(buf.data(), offset, buf.size(),
+                              "\nUser provided unwind callback messages:\n");
+            utils::safeAppend(buf.data(), offset, buf.size(), hook::unWindStorage.buffer.data(),
+                              hook::unWindStorage.offset);
+            utils::safeAppend(buf.data(), offset, buf.size(), "\n");
+        }
+    }
+
     bool anyInvoked{false};
     std::size_t called{0};
     for (const auto& callback : std::ranges::reverse_view(threadCallbacks)) {
-        if (callback != nullptr) {
+        if (callback.f == nullptr) {
+            continue;
+        }
+        if (!anyInvoked) {
+            utils::safeAppend(buf.data(), offset, buf.size(),
+                              "\nUser provided panic/fail callback messages:\n");
+            anyInvoked = true;
+        }
+        std::string_view effectiveMsg{};
+        std::string str{};
+#if FAULT_EXCEPTIONS
+        try {
+#endif
+            str = callback.f();
+            if (!str.empty()) {
+                effectiveMsg = std::string_view{str};
+            } else {
+                effectiveMsg = "<Empty message on user callback>";
+            }
+#if FAULT_EXCEPTIONS
+        } catch (...) {
+            effectiveMsg = "<Exception thrown on user callback>";
+        }
+#endif
+        utils::safeAppend(buf.data(), offset, buf.size(), "( Thread Local ) ");
+        utils::itoaSafeAppend(buf.data(), offset, buf.size(), 1 + called++);
+        utils::safeAppend(buf.data(), offset, buf.size(), ": ");
+        utils::safeAppend(buf.data(), offset, buf.size(), effectiveMsg.data(), effectiveMsg.size());
+        if (callback.loc.has_value()) {
+            utils::safeAppend(buf.data(), offset, buf.size(), *callback.loc);
+        }
+        utils::safeAppend(buf.data(), offset, buf.size(), "\n");
+    }
+    {
+        std::lock_guard lock{globalMutex};
+        for (const auto& callback : std::ranges::reverse_view(globalCallbacks)) {
+            if (callback.f == nullptr) {
+                continue;
+            }
             if (!anyInvoked) {
                 utils::safeAppend(buf.data(), offset, buf.size(),
-                                  "\nUser provided panic callback messages:\n");
+                                  "\nUser provided panic/fail callback messages:\n");
                 anyInvoked = true;
             }
             std::string_view effectiveMsg{};
@@ -516,49 +630,26 @@ bool invokeAndSave(const std::span<char> buf, std::size_t& offset) noexcept {
 #if FAULT_EXCEPTIONS
             try {
 #endif
-                str = callback();
-                effectiveMsg = std::string_view{str.c_str(), str.size()};
+                str = callback.f();
+                if (!str.empty()) {
+                    effectiveMsg = std::string_view{str};
+                } else {
+                    effectiveMsg = "<Empty message on user callback>";
+                }
 #if FAULT_EXCEPTIONS
             } catch (...) {
                 effectiveMsg = "<Exception thrown on user callback>";
             }
 #endif
-            utils::safeAppend(buf.data(), offset, buf.size(), "( Thread Local ) ");
+            utils::safeAppend(buf.data(), offset, buf.size(), "(    GLOBAL    ) ");
             utils::itoaSafeAppend(buf.data(), offset, buf.size(), 1 + called++);
             utils::safeAppend(buf.data(), offset, buf.size(), ": ");
             utils::safeAppend(buf.data(), offset, buf.size(), effectiveMsg.data(),
                               effectiveMsg.size());
-            utils::safeAppend(buf.data(), offset, buf.size(), "\n");
-        }
-    }
-    {
-        std::lock_guard lock{globalMutex};
-        for (const auto& callback : std::ranges::reverse_view(globalCallbacks)) {
-            if (callback != nullptr) {
-                if (!anyInvoked) {
-                    utils::safeAppend(buf.data(), offset, buf.size(),
-                                      "\nUser provided panic callback messages:\n");
-                    anyInvoked = true;
-                }
-                std::string_view effectiveMsg{};
-                std::string str{};
-#if FAULT_EXCEPTIONS
-                try {
-#endif
-                    str = callback();
-                    effectiveMsg = std::string_view{str.c_str(), str.size()};
-#if FAULT_EXCEPTIONS
-                } catch (...) {
-                    effectiveMsg = "<Exception thrown on user callback>";
-                }
-#endif
-                utils::safeAppend(buf.data(), offset, buf.size(), "(    GLOBAL    ) ");
-                utils::itoaSafeAppend(buf.data(), offset, buf.size(), 1 + called++);
-                utils::safeAppend(buf.data(), offset, buf.size(), ": ");
-                utils::safeAppend(buf.data(), offset, buf.size(), effectiveMsg.data(),
-                                  effectiveMsg.size());
-                utils::safeAppend(buf.data(), offset, buf.size(), "\n");
+            if (callback.loc.has_value()) {
+                utils::safeAppend(buf.data(), offset, buf.size(), *callback.loc);
             }
+            utils::safeAppend(buf.data(), offset, buf.size(), "\n");
         }
     }
     return anyInvoked;
@@ -1476,7 +1567,7 @@ struct LinuxHandling {
     static inline bool shouldReRaiseSignal{true};
 
     [[noreturn]] static void reRaiseSignal(int sig) noexcept {
-        struct sigaction sa{};
+        struct sigaction sa {};
         sa.sa_handler = SIG_DFL;
         sigemptyset(&sa.sa_mask);
         sa.sa_flags = 0;
@@ -1699,7 +1790,7 @@ struct LinuxHandling {
     [[noreturn]] static void commonActions(std::size_t offset, bool printToStderr, bool writeReport,
                                            const std::optional<cpptrace::object_trace>& customTrace,
                                            bool resolveTrace) noexcept {
-        struct sigaction sa{};
+        struct sigaction sa {};
         sigfillset(&sa.sa_mask);
         sa.sa_handler = LinuxHandling::popUpAndExit;
         sigemptyset(&sa.sa_mask);
@@ -1771,7 +1862,7 @@ struct LinuxHandling {
         sigaltstack(&LinuxHandling::gAltstack, nullptr);
 
         // Signal handlers
-        struct sigaction sa{};
+        struct sigaction sa {};
         sa.sa_sigaction = LinuxHandling::linuxSignalHandler;
         sigemptyset(&sa.sa_mask);
         sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
@@ -1870,24 +1961,24 @@ struct TerminateHandling {
     static void runTerminateHook(const std::span<char> msg, std::size_t& msgOffset,
                                  const std::span<char> detail, std::size_t& detailOffset,
                                  cpptrace::object_trace& trace) noexcept {
-        if (TerminateHandling::terminateHook != nullptr) {
-#if FAULT_EXCEPTIONS
-            try {
-#endif
-                v1::ObjectTrace faultTrace =
-                    adapter::v1::from_cpptrace(trace).value_or(v1::ObjectTrace{});
-                TerminateHandling::terminateHook(std::string_view{msg.data(), msgOffset},
-                                                 faultTrace);
-                trace = adapter::v1::to_cpptrace(faultTrace).value_or(cpptrace::object_trace{});
-#if FAULT_EXCEPTIONS
-            } catch (...) {
-                utils::safeAppend(detail.data(), detailOffset, detail.size(),
-                                  "Note: user provided terminate hook incurred in an "
-                                  "exception, and may not have "
-                                  "been properly handled. This will not affect the report.\n");
-            }
-#endif
+        if (TerminateHandling::terminateHook == nullptr) {
+            return;
         }
+#if FAULT_EXCEPTIONS
+        try {
+#endif
+            v1::ObjectTrace faultTrace =
+                adapter::v1::from_cpptrace(trace).value_or(v1::ObjectTrace{});
+            TerminateHandling::terminateHook(std::string_view{msg.data(), msgOffset}, faultTrace);
+            trace = adapter::v1::to_cpptrace(faultTrace).value_or(cpptrace::object_trace{});
+#if FAULT_EXCEPTIONS
+        } catch (...) {
+            utils::safeAppend(detail.data(), detailOffset, detail.size(),
+                              "Note: user provided terminate hook incurred in an "
+                              "exception, and may not have "
+                              "been properly handled. This will not affect the report.\n");
+        }
+#endif
     }
 
     [[nodiscard]] static cpptrace::object_trace retrieveTraceWithMsg(
@@ -2271,11 +2362,13 @@ void try_catch(
 #endif
 }
 
-PanicGuard::PanicGuard(PanicHook callback, HookScope scope) : scope_{scope} {
+PanicGuardBase::PanicGuardBase(PanicHook callback, HookScope scope,
+                               const std::optional<std::source_location>& loc)
+    : scope_{scope} {
     if (scope == HookScope::kThreadLocal) {
         for (std::size_t i{0}; i < hook::kMaxPanicHooks; ++i) {
-            if (!hook::threadCallbacks[i]) {
-                hook::threadCallbacks[i] = std::move(callback);
+            if (!hook::threadCallbacks[i].f) {
+                hook::threadCallbacks[i] = {.f = std::move(callback), .loc = loc};
                 idx_ = i;
                 active_ = true;
                 return;
@@ -2285,8 +2378,8 @@ PanicGuard::PanicGuard(PanicHook callback, HookScope scope) : scope_{scope} {
     }
     std::lock_guard lock{hook::globalMutex};
     for (std::size_t i{0}; i < hook::kMaxPanicHooks; ++i) {
-        if (!hook::globalCallbacks[i]) {
-            hook::globalCallbacks[i] = std::move(callback);
+        if (!hook::globalCallbacks[i].f) {
+            hook::globalCallbacks[i] = {.f = std::move(callback), .loc = loc};
             idx_ = i;
             active_ = true;
             return;
@@ -2294,22 +2387,108 @@ PanicGuard::PanicGuard(PanicHook callback, HookScope scope) : scope_{scope} {
     }
 }
 
-void PanicGuard::release() noexcept {
+void PanicGuardBase::release() noexcept {
     if (!active_) {
         return;
     }
     if (scope_ == HookScope::kThreadLocal) {
-        hook::threadCallbacks[idx_] = nullptr;
+        hook::threadCallbacks[idx_].release();
         active_ = false;
         return;
     }
     std::lock_guard lock{hook::globalMutex};
-    hook::globalCallbacks[idx_] = nullptr;
+    hook::globalCallbacks[idx_].release();
     active_ = false;
 }
 
-PanicGuard::~PanicGuard() noexcept {
+PanicGuardBase::~PanicGuardBase() noexcept {
     release();
+}
+
+UnwindGuardBase::UnwindGuardBase(PanicHook callback, std::optional<std::source_location> loc)
+    : callback_{std::move(callback)}, sourceLoc_{loc}, uncaughtExps_{std::uncaught_exceptions()} {}
+
+UnwindGuardBase::~UnwindGuardBase() noexcept {
+    if (std::uncaught_exceptions() <= uncaughtExps_ || callback_ == nullptr) {
+        return;
+    }
+    hook::invokeAndSaveUnwind(callback_, sourceLoc_);
+}
+
+void UnwindGuardBase::release() noexcept {
+    callback_ = nullptr;
+}
+
+void UnwindGuardBase::resetBuffer() noexcept {
+    hook::resetBuffer();
+}
+
+FailGuardBase::FailGuardBase(PanicHook callback, HookScope scope,
+                             std::optional<std::source_location> loc)
+    : scope_{scope}, uncaughtExps_{std::uncaught_exceptions()} {
+    if (scope == HookScope::kThreadLocal) {
+        for (std::size_t i{0}; i < hook::kMaxPanicHooks; ++i) {
+            if (!hook::threadCallbacks[i].f) {
+                hook::threadCallbacks[i] = {.f = std::move(callback), .loc = loc};
+                idx_ = i;
+                active_ = true;
+                return;
+            }
+        }
+        return;
+    }
+    std::lock_guard lock{hook::globalMutex};
+    for (std::size_t i{0}; i < hook::kMaxPanicHooks; ++i) {
+        if (!hook::globalCallbacks[i].f) {
+            hook::globalCallbacks[i] = {.f = std::move(callback), .loc = loc};
+            idx_ = i;
+            active_ = true;
+            return;
+        }
+    }
+}
+
+void FailGuardBase::release() noexcept {
+    if (!active_) {
+        return;
+    }
+    if (scope_ == HookScope::kThreadLocal) {
+        hook::threadCallbacks[idx_].release();
+        active_ = false;
+        return;
+    }
+    std::lock_guard lock{hook::globalMutex};
+    hook::globalCallbacks[idx_].release();
+    active_ = false;
+}
+
+void FailGuardBase::resetBuffer() noexcept {
+    hook::resetBuffer();
+}
+
+FailGuardBase::~FailGuardBase() noexcept {
+    if (!active_ || std::uncaught_exceptions() <= uncaughtExps_) {
+        release();
+        return;
+    }
+    if (scope_ == HookScope::kThreadLocal) {
+        if (hook::threadCallbacks[idx_].f == nullptr) {
+            return;
+        }
+        hook::invokeAndSaveUnwind(hook::threadCallbacks[idx_].f, hook::threadCallbacks[idx_].loc);
+        hook::threadCallbacks[idx_].release();
+        active_ = false;
+        return;
+    }
+    std::unique_lock lock{hook::globalMutex};
+    if (hook::globalCallbacks[idx_].f == nullptr) {
+        return;
+    }
+    lock.unlock();
+    hook::invokeAndSaveUnwind(hook::globalCallbacks[idx_].f, hook::globalCallbacks[idx_].loc);
+    lock.lock();
+    hook::globalCallbacks[idx_].release();
+    active_ = false;
 }
 
 }  // namespace v1

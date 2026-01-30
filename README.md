@@ -27,7 +27,7 @@ When a C++ application crashes, the default behavior is often a silent exit or a
     * [std::terminate + panic features](#31-stdterminate-handler--panic-features)
   * [try_catch cpptrace wrapper](#4-try_catch-integration-with-cpptrace-exception-traces)
     * [cpptrace direct usage](#41-explicitly-with-cpptrace)
-  * [Panic Checkpoint hooks](#5-panic-hooks)
+  * [Fault Checkpoint Guards](#5-fault-guards)
 * [C-Language/Older C++ Support](#fault-in-c)
 * [Utilities](#utilities)
 * [Headers](#headers)
@@ -74,7 +74,7 @@ include(FetchContent)
 FetchContent_Declare(
     fault
     GIT_REPOSITORY [https://github.com/Ridrik/fault.git](https://github.com/Ridrik/fault.git)
-    GIT_TAG v0.4.1
+    GIT_TAG v0.5.0
 )
 FetchContent_MakeAvailable(fault)
 
@@ -446,37 +446,43 @@ int main() {
 
 ---
 
-### 5. Panic Hooks
+### 5. Fault Guards
 
 All assertions have options for deferred callbacks, which is helpful. But what if you have common information that you'd like to print for multiple assertions? You'd need to repeat the callback for each, which is ugly and verbose.
 
-And what if you have other information, or actions, that you'd like see printed or performed, but are in a parent scope of the assertion? With standard libraries and features, this would be troublesome to do. To answer this, `fault` introduces the concept of panic checkpoints:
+What more, if you have information that is in parent scopes of the assertion, it'd be troublesome to propagate that info to the assertion failure context.
 
-**Panic Hooks**: added user provided callbacks, in a RAII style, to be invoked if any panic, assertion failure, or std::terminate is called within the scope of such hook, in reverse order of registration. See the following example:
+In addition, for all your programs whose major flows are wrapped in try/catch blocks whose activation imply a fatal condition, one could also ask whether there are guards that can be used during the unwind process to better help the developer in debugging. 
+
+Whether it is assertions or exceptions, `fault` introduces the concept of checkpoint guards in its unified system, presenting 3 major guards in a RAII style:
+
+- **PanicGuard/PanicGuardAt/FAULT_DEBUG_GUARD/FAULT_DEBUG_GUARD_AT**: these are user provided callbacks, to be invoked if any panic, assertion failure, or std::terminate is called within the scope of such hook, in reverse order of registration.
+- **UnwindGuard/UnwindGuardAt/FAULT_DEBUG_UNWIND/FAULT_DEBUG_UNWIND_AT**: These guards take a callback and check, on destruction, whether an unwind event is in process, executing the callback and storing the return string in an internal buffer that will be displayed during a fault report if a later **panic** or **std::terminate** is triggered.
+- **FailGuard/FailGuardAt/FAULT_DEBUG_FAIL/FAULT_DEBUG_FAIL_AT**: These provide both a guard against panic (including assertion failures), std::terminate, and unwind events, being a combined effect of both the above mentioned guards.
+
+Example:
 
 ```cpp
 namespace {
 
-int add(int a, int b) {
-    return a + b;
+void processFile() {
+    throw std::runtime_error("Failed to open file!");
 }
 
 void bar() {
-    fault::PanicGuard hook{[] { return "First 2 additions"; }, fault::HookScope::kThreadLocal};
+    fault::UnwindGuardAt hook{[] -> std::string { return "Entered bar..."; }};
 
-    const auto res = add(5, 10);
-    FAULT_ASSERT(res > 0, "{} with {} Should be positive", 5, 10);
-
-    const auto res2 = add(1, 2);
-    FAULT_ASSERT(res2 == res, "{} not the same as res2 {}", res, res2);
+    FAULT_DEBUG_FAIL([] -> std::string { return "Calling processFile..."; });
+    processFile();
 }
 
 void foo() {
-    fault::PanicGuard hook{[] { return "Adding some numbers that must stay coherent"; },
+    fault::FailGuardAt guard{[]() -> std::string { return "Fail guard, with location"; },
+                             fault::HookScope::kThreadLocal};
+    fault::UnwindGuardAt guard2{[]() -> std::string { return "Unwind guard, with location"; }};
+    fault::PanicGuard hook{[] -> std::string { return "Calling bar..."; },
                            fault::HookScope::kGlobal};
-    std::thread([] { bar(); }).detach();
-
-    fault::panic("Shouldn't have happened!");
+    bar();
 }
 
 }  // namespace
@@ -491,57 +497,44 @@ int main() {
         std::cerr << "Failed to initialize fault.\n";
         return EXIT_FAILURE;
     }
-
-    fault::PanicGuard hook{[] { return "Print some general, app-wise context"; },
-                           fault::HookScope::kGlobal};
-    foo();
+    fault::FailGuardAt hook{[] -> std::string { return "Fault guard with location"; },
+                            fault::HookScope::kGlobal};
+    FAULT_DEBUG_GUARD_AT([]() -> std::string { return "Entering try/catch"; });
+    try {
+        fault::FailGuardAt guard{[]() -> std::string { return "Calling foo..."; }};
+        foo();
+    } catch (const std::exception& e) {
+        fault::panic("Caught exception: {}", e.what());
+    }
 
     return 0;
 }
 ```
 
-With relevant report output:
+Will include the following output in the report:
 
 ```
-...
-Technical comments:
-Reason: panic triggered.
+(...)
 
-User provided panic callback messages:
-(    GLOBAL    ) 0: Adding some numbers that must stay coherent
-(    GLOBAL    ) 1: Print some general, app-wise context
-...
-```
+Technical comments: Reason: panic triggered.
 
-if changing `foo()` to:
+User provided unwind callback messages:
+1: Calling processFile...
+2: Entered bar... @ /mnt/c/Codes/fault/tests/test_hook_guard.cpp:24 (void {anonymous}::bar())
+3: Unwind guard, with location @ /mnt/c/Codes/fault/tests/test_hook_guard.cpp:33 (void {anonymous}::foo())
+4: Fail guard, with location @ /mnt/c/Codes/fault/tests/test_hook_guard.cpp:32 (void {anonymous}::foo())
+5: Calling foo... @ /mnt/c/Codes/fault/tests/test_hook_guard.cpp:55 (int main())
 
-```cpp
-void foo() {
-    fault::PanicGuard hook{[] { return "Adding some numbers that must stay coherent"; },
-                           fault::HookScope::kGlobal};
-    std::thread([] { bar(); }).detach();
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-    fault::panic("Shouldn't have happened!");
-}
-```
 
-becomes:
+User provided panic/fail callback messages:
+( Thread Local ) 1: Entering try/catch @ /mnt/c/Codes/fault/tests/test_hook_guard.cpp:53 (int main())
+(    GLOBAL    ) 2: Fault guard with location @ /mnt/c/Codes/fault/tests/test_hook_guard.cpp:52 (int main())
+
+(...)
 
 ```
-...
-Technical comments:
-Reason: panic triggered.
 
-User provided panic callback messages:
-( Thread Local ) 1: First 2 additions
-(    GLOBAL    ) 2: Adding some numbers that must stay coherent
-(    GLOBAL    ) 3: Print some general, app-wise context
-...
-```
-
-There's also `FAULT_DEBUG_GUARD`, which acts like fault::PanicGuard but gets compiled away as `FAULT_ASSERT` (that is, if `FAULT_ASSERTIONS` is `OFF`, or `DEFAULT` with `NDEBUG` builds).
-
-Panic guards provide the user deferred common actions and messages to print should the program terminate via `panic` (including all assertions) or via `std::terminate`. Users may think of them like human-readable code checkpoints, and present invaluable potential for both debugging and even for traceability on production. Note that all callback messages get appended to the details section of the report (thus, not polluting the popup or terminal summary).
+Guards provide a way to execute and append user provided context on common software faults. Users may think of them like human-readable code **checkpoints**, and present invaluable potential for both debugging and even for traceability on production. Note that all callback messages get appended to the details section of the report (thus, not polluting the popup or terminal summary).
 
 For `C` (or older `C++` standard when pre-compiled), equivalent options exist:
 

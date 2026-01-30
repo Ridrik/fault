@@ -1,4 +1,4 @@
-#include <chrono>
+#include <exception>
 #include <iostream>
 #include <stdexcept>
 #include <thread>
@@ -16,26 +16,24 @@
 
 namespace {
 
-int add(int a, int b) {
-    return a + b;
+void processFile() {
+    throw std::runtime_error("Failed to open file!");
 }
 
 void bar() {
-    fault::PanicGuard hook{[] { return "First 2 additions"; }, fault::HookScope::kThreadLocal};
+    fault::UnwindGuardAt hook{[] -> std::string { return "Entered bar..."; }};
 
-    const auto res = add(5, 10);
-    FAULT_ASSERT(res > 0, "{} with {} Should be positive", 5, 10);
-
-    const auto res2 = add(1, 2);
-    FAULT_ASSERT(res2 == res, "{} not the same as res2 {}", res, res2);
+    FAULT_DEBUG_FAIL([] -> std::string { return "Calling processFile..."; });
+    processFile();
 }
 
 void foo() {
-    fault::PanicGuard hook{[] { return "Adding some numbers that must stay coherent"; },
+    fault::FailGuardAt guard{[]() -> std::string { return "Fail guard, with location"; },
+                             fault::HookScope::kThreadLocal};
+    fault::UnwindGuardAt guard2{[]() -> std::string { return "Unwind guard, with location"; }};
+    fault::PanicGuard hook{[] -> std::string { return "Calling bar..."; },
                            fault::HookScope::kGlobal};
-    std::thread([] { bar(); }).detach();
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-    fault::panic("Shouldn't have happened!");
+    bar();
 }
 
 }  // namespace
@@ -50,10 +48,15 @@ int main() {
         std::cerr << "Failed to initialize fault.\n";
         return EXIT_FAILURE;
     }
-
-    fault::PanicGuard hook{[] { return "Print some general, app-wise context"; },
-                           fault::HookScope::kGlobal};
-    foo();
+    fault::FailGuardAt hook{[] -> std::string { return "Fault guard with location"; },
+                            fault::HookScope::kGlobal};
+    FAULT_DEBUG_GUARD_AT([]() -> std::string { return "Entering try/catch"; });
+    try {
+        fault::FailGuardAt guard{[]() -> std::string { return "Calling foo..."; }};
+        foo();
+    } catch (const std::exception& e) {
+        fault::panic("Caught exception: {}", e.what());
+    }
 
     return 0;
 }

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21...4.1)
 
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-project(fault VERSION 0.4.1 LANGUAGES C CXX)
+project(fault VERSION 0.5.0 LANGUAGES C CXX)
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/version.h.in"
@@ -82,7 +82,7 @@ if(WIN32)
     target_compile_definitions(fault PRIVATE NOMINMAX) # prevent Windows min/max macros
 endif()
 
-target_link_libraries(fault PRIVATE cpptrace::cpptrace)
+target_link_libraries(fault PRIVATE SYSTEM cpptrace::cpptrace)
 
 set(FAULT_LOCATIONS "DEFAULT" CACHE STRING "fault source location metadata for fault::expect(): ON, OFF, or DEFAULT(OFF on non-debug/NDEBUG)")
 
