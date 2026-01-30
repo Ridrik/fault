@@ -312,7 +312,7 @@ struct FAULT_EXPORT UnwindGuardBase {
      * @brief Resets fault global buffer on all unwind guard callback messages.
      *
      */
-    static FAULT_EXPORT void resetBuffer() noexcept;
+    static void resetBuffer() noexcept;
 
    private:
     PanicHook callback_;
@@ -367,7 +367,7 @@ struct FAULT_EXPORT FailGuardBase {
      * @brief Resets fault global buffer on all unwind guard callback messages.
      *
      */
-    static FAULT_EXPORT void resetBuffer() noexcept;
+    static void resetBuffer() noexcept;
 
    private:
     std::size_t idx_{0};
