@@ -1,3 +1,7 @@
+## v0.5.1 - February 2026
+## Fixed
+- The test crash file at startup is now properly removed (was left in an empty state before).
+
 ## v0.5.0 - January 2026
 ## Added
 - `UnwindGuard`, `UnwindGuardAt`, `FAULT_DEBUG_UNWIND_GUARD` and `FAULT_DEBUG_UNWIND_GUARD_AT`- Unwind guards are execution guards that trigger if an unwind process occurs on such object, i.e if an exception is threwn within a try/catch block. It does 2 things: execute arbitrary user functions, meaning it can be used as a 'scoped failure' feature; return a string that is saved on `fault` global context, which can then be logged to the report, if the user later panics or if `std::terminate` is hit.

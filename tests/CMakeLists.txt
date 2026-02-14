@@ -47,7 +47,7 @@ add_test_executable(test_c_api test_c_api.c)
 # ====== Crash Target ======
 find_package(Boost COMPONENTS system filesystem process program_options unit_test_framework)
 
-if (NOT BOOST_FOUND) 
+if (NOT Boost_FOUND) 
     return()
 endif()
 

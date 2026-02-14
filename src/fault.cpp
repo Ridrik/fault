@@ -191,7 +191,7 @@ void getNowSafe(std::int64_t& outSec, std::int64_t& outNsec) noexcept {
     outSec = static_cast<std::int64_t>((uli.QuadPart / 10000000ULL) - kUnixOffset);
     outNsec = static_cast<std::int64_t>(((uli.QuadPart % 10000000ULL) * 100));
 #else
-    struct timespec ts {};
+    struct timespec ts{};
     clock_gettime(CLOCK_REALTIME, &ts);
     outSec = ts.tv_sec;
     outNsec = ts.tv_nsec;
@@ -338,15 +338,22 @@ inline std::size_t strSafeCopy(char* dest, std::size_t maxLen, std::string_view 
 }
 
 bool verifyWriteAccess(const std::string& p) noexcept {
+    {
+        std::ofstream testFile(p, std::ios::out | std::ios::trunc);
+        if (!testFile.is_open()) {
+            return false;
+        }
+        testFile << "test";
+        testFile.flush();
+        if (!testFile) {
+            return false;
+        }
+    }
     std::error_code ec;
-    std::ofstream testFile(p, std::ios::app);
-
-    if (!testFile.is_open()) {
+    if (!std::filesystem::remove(p, ec)) {
         return false;
     }
-
-    testFile << "";
-    return true;
+    return !ec;
 }
 
 v1::ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fileName,
@@ -1567,7 +1574,7 @@ struct LinuxHandling {
     static inline bool shouldReRaiseSignal{true};
 
     [[noreturn]] static void reRaiseSignal(int sig) noexcept {
-        struct sigaction sa {};
+        struct sigaction sa{};
         sa.sa_handler = SIG_DFL;
         sigemptyset(&sa.sa_mask);
         sa.sa_flags = 0;
@@ -1790,7 +1797,7 @@ struct LinuxHandling {
     [[noreturn]] static void commonActions(std::size_t offset, bool printToStderr, bool writeReport,
                                            const std::optional<cpptrace::object_trace>& customTrace,
                                            bool resolveTrace) noexcept {
-        struct sigaction sa {};
+        struct sigaction sa{};
         sigfillset(&sa.sa_mask);
         sa.sa_handler = LinuxHandling::popUpAndExit;
         sigemptyset(&sa.sa_mask);
@@ -1862,7 +1869,7 @@ struct LinuxHandling {
         sigaltstack(&LinuxHandling::gAltstack, nullptr);
 
         // Signal handlers
-        struct sigaction sa {};
+        struct sigaction sa{};
         sa.sa_sigaction = LinuxHandling::linuxSignalHandler;
         sigemptyset(&sa.sa_mask);
         sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
