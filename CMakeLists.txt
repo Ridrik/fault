@@ -31,6 +31,8 @@ set(FAULT_SOURCES
     "include/fault/format.hpp"
     "include/fault/attributes.h"
     "include/fault/config.h"
+    "include/fault/macros.h"
+    "include/fault/adapter/stacktrace.hpp"
 )
 set(FAULT_GENERATED_HEADERS
     "${CMAKE_CURRENT_BINARY_DIR}/generated/fault/version.h"
@@ -60,6 +62,8 @@ target_sources(fault PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/format.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/attributes.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/config.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/macros.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/adapter/stacktrace.hpp"
         "${CMAKE_CURRENT_BINARY_DIR}/include/fault/fault_export.h"
 )
 
