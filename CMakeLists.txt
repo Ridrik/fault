@@ -50,6 +50,18 @@ else()
     add_library(fault STATIC ${FAULT_SOURCES} ${FAULT_GENERATED_HEADERS})
 endif()
 
+target_sources(fault PUBLIC
+    FILE_SET HEADERS
+    BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/fault.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/fault.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/core.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/format.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/attributes.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/config.h"
+)
+
 add_library(fault::fault ALIAS fault)
 
 add_subdirectory(extern) # cpptrace
