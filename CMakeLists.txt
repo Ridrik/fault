@@ -52,7 +52,7 @@ endif()
 
 target_sources(fault PUBLIC
     FILE_SET HEADERS
-    BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_BINARY_DIR}/include"
     FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/fault.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/fault.h"
@@ -60,6 +60,7 @@ target_sources(fault PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/format.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/attributes.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/fault/config.h"
+        "${CMAKE_CURRENT_BINARY_DIR}/include/fault/fault_export.h"
 )
 
 add_library(fault::fault ALIAS fault)
