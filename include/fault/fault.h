@@ -5,10 +5,9 @@
 
 #include <stdint.h>
 
-#include <fault/attributes.h>
-#include <fault/config.h>
-#include <fault/fault_export.h>
-#include <fault/macros.h>
+#include "fault/attributes.h"
+#include "fault/config.h"
+#include "fault/fault_export.h"
 
 #ifdef __cplusplus
 #define FAULT_NOEXCEPT noexcept
@@ -52,6 +51,7 @@ typedef struct FaultConfigV1 {
     struct PanicSettingsV1 panic;
 } FaultConfigV1;
 
+// NOLINTNEXTLINE
 typedef enum FaultConfigWarningV1 {
     kNone = 0,
     kAlreadyInitialized = 1 << 0,
@@ -114,6 +114,7 @@ static inline void fault_verify_c_v1(bool cond, fault_msg_callback_t callback,
 }
 
 typedef struct fault_panic_guard_s_v1* fault_panic_guard_handle_v1;
+// NOLINTNEXTLINE
 typedef enum FaultHookScopeV1 { kThreadLocal, kGlobal } FaultHookScopeV1;
 
 typedef void (*fault_panic_callback_t_v1)(char* buffer, size_t buf_size, void* userData);

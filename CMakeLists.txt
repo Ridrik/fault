@@ -4,6 +4,11 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 project(fault VERSION 0.5.1 LANGUAGES C CXX)
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+include(GNUInstallDirs)
+
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/version.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/fault/version.h"
@@ -23,18 +28,33 @@ if(MSVC)
     add_compile_options(/Zc:preprocessor) # __VA_OPT__
 endif()
 
-set(FAULT_SOURCES
-    "src/fault.cpp"
-    "include/fault/fault.hpp"
-    "include/fault/fault.h"
+set(FAULT_API_SOURCES
     "include/fault/core.hpp"
+    "include/fault/fault.hpp"
     "include/fault/format.hpp"
     "include/fault/attributes.h"
     "include/fault/config.h"
-)
-set(FAULT_GENERATED_HEADERS
+    "include/fault/fault.h"
+    "include/fault/macros.h"
+    "include/fault/adapter/stacktrace.hpp"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/fault/version.h"
     "${CMAKE_CURRENT_BINARY_DIR}/include/fault/fault_export.h"
+)
+add_library(fault_headers INTERFACE ${FAULT_API_SOURCES})
+add_library(fault::headers ALIAS fault_headers)
+set_target_properties(fault_headers PROPERTIES
+    EXPORT_NAME headers
+)
+
+target_include_directories(fault_headers INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
+    $<INSTALL_INTERFACE:include>
+)
+
+set(FAULT_SOURCES
+    "src/fault.cpp"
 )
 
 if (NOT DEFINED BUILD_SHARED_LIBS)
@@ -44,28 +64,21 @@ endif()
 option(FAULT_BUILD_SHARED "Build fault as a shared library" ${BUILD_SHARED_LIBS})
 if(FAULT_BUILD_SHARED)
     message(STATUS "Building fault as shared library")
-    add_library(fault SHARED ${FAULT_SOURCES} ${FAULT_GENERATED_HEADERS})
+    add_library(fault SHARED ${FAULT_SOURCES})
 else()
     message(STATUS "Building fault as static library")
-    add_library(fault STATIC ${FAULT_SOURCES} ${FAULT_GENERATED_HEADERS})
+    add_library(fault STATIC ${FAULT_SOURCES})
 endif()
 
 add_library(fault::fault ALIAS fault)
+target_compile_features(fault PRIVATE cxx_std_20)
+target_link_libraries(fault PUBLIC fault::headers)
 
 add_subdirectory(extern) # cpptrace
 
 add_library(fault_adapter INTERFACE)
 add_library(fault::fault_adapter ALIAS fault_adapter)
 target_link_libraries(fault_adapter INTERFACE fault cpptrace::cpptrace)
-
-target_include_directories(fault PUBLIC 
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
-    $<INSTALL_INTERFACE:include>
-)
-
-target_compile_features(fault PRIVATE cxx_std_20)
 
 set_target_properties(fault PROPERTIES
     CXX_VISIBILITY_PRESET hidden

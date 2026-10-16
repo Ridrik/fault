@@ -54,6 +54,10 @@
 #error "Fault C++ headers require C++20. Use 'fault.h' for older C++ or C projects."
 #endif
 
+#include <concepts>
+#include <cstddef>
+#include <utility>
+
 #include "fault/config.h"
 
 #define CONCAT_INNER(a, b) a##b
@@ -176,7 +180,7 @@ enum class ConfigWarning : std::uint8_t {
     kInvalidPath = 1 << 2,
     kReportPathTooLong = 1 << 3,
     kReportPathWriteTestFailed = 1 << 4,
-    kInternalError = 1 << 5
+    kInternalError = 1 << 5,
 };
 
 constexpr ConfigWarning operator|(ConfigWarning a, ConfigWarning b) {

@@ -1,6 +1,7 @@
+#include <corecrt.h>
 #include <stdio.h>
 
-#include <fault/fault.h>
+#include "fault/fault.h"
 
 void infinite_recursion() {
     volatile char buffer[256];

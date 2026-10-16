@@ -50,7 +50,7 @@
 #ifndef FAULT_FAULT_HPP
 #define FAULT_FAULT_HPP
 
-#include <fault/core.hpp>
-#include <fault/format.hpp>
+#include <fault/core.hpp>    // IWYU pragma: export
+#include <fault/format.hpp>  // IWYU pragma: export
 
 #endif  // FAULT_HPP

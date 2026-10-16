@@ -3,7 +3,7 @@
 
 #include <format>
 
-#include <fault/core.hpp>
+#include "fault/core.hpp"
 
 namespace fault {  // NOLINT(modernize-concat-nested-namespaces)
 

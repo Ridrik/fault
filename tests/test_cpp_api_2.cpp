@@ -1,8 +1,12 @@
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
+#include <exception>
 #include <iostream>
+#include <stdexcept>
 #include <thread>
 
-#include <fault/fault.hpp>
+#include "fault/fault.hpp"
 
 void foo() {
     volatile int* p{nullptr};

@@ -1,10 +1,19 @@
+#include <array>
 #include <cstdlib>
+#include <exception>
 #include <iostream>
+#include <stdexcept>
+#include <string>
 
 #include <boost/program_options.hpp>
+#include <boost/program_options/detail/parsers.hpp>
+#include <boost/program_options/options_description.hpp>
+#include <boost/program_options/value_semantic.hpp>
+#include <boost/program_options/variables_map.hpp>
 #include <fault/fault.hpp>
 
 #include "fault/core.hpp"
+#include "fault/macros.h"
 
 namespace po = boost::program_options;
 

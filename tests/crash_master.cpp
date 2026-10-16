@@ -1,21 +1,43 @@
-#include "fault/attributes.h"
-
-#include <csignal>
 #define BOOST_TEST_MODULE ProcessCrashTests
+
+#include <algorithm>
+#include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <exception>
+#include <format>
+#include <functional>
+#include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <boost/asio.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/readable_pipe.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/exception/detail/type_info.hpp>
+#include <boost/filesystem/operations.hpp>
+#include <boost/filesystem/path.hpp>
 #include <boost/process.hpp>
 #include <boost/process/v2/environment.hpp>
+#include <boost/process/v2/process.hpp>
 #include <boost/process/v2/stdio.hpp>
+#include <boost/system/detail/error_code.hpp>
 #include <boost/test/included/unit_test.hpp>
+#include <boost/test/tools/context.hpp>
 #include <boost/test/tools/old/interface.hpp>
-#include <fault/fault.hpp>
+#include <boost/test/unit_test_suite.hpp>
+
+#ifdef _WIN32
+#include <minwinbase.h>
+#include <minwindef.h>
+#endif
+
+#include "fault/attributes.h"
+#include "fault/fault.hpp"
 
 namespace {
 
@@ -56,13 +78,13 @@ enum class AbstractFault : std::uint8_t {
 
 [[nodiscard]] std::string formatVector(const std::vector<std::string>& v) {
     std::string result = "[";
-    for (size_t i = 0; i < v.size(); ++i) {
+    for (std::size_t i = 0; i < v.size(); ++i) {
         result += std::format("{}", v[i]);
         if (i + 1 < v.size()) {
             result += ", ";
         }
     }
-    result += "]";
+    result += ']';
     return result;
 }
 
@@ -111,7 +133,7 @@ struct ProcessFixture {
 BOOST_FIXTURE_TEST_SUITE(CrashTestSuite, ProcessFixture)
 
 [[nodiscard]] bool checkCommonErrMessage(std::string_view s) {
-#if defined(__linux__)
+#ifdef __linux__
     static constexpr std::array<std::string_view, 7> kExpectedKeywords{
         {"FAULT REPORT", fault::kDefaultErrorMessage, "Fault Date", "Fault Time", "Unix Epoch",
          "Uptime", "FAULT END"}};
@@ -125,7 +147,7 @@ BOOST_FIXTURE_TEST_SUITE(CrashTestSuite, ProcessFixture)
     });
 }
 
-#if defined(__linux__)
+#ifdef __linux__
 
 constexpr auto kFaultToKeyword = [](AbstractFault fault) -> std::vector<std::string_view> {
     switch (fault) {
@@ -164,7 +186,7 @@ constexpr auto kFaultToKeyword = [](AbstractFault fault) -> std::vector<std::str
 }
 
 #elif defined(_WIN32)
-constexpr auto kCodeToStr = [](DWORD code) -> std::string_view {
+constexpr auto kCodeToStr = [](::DWORD code) -> std::string_view {
     switch (code) {
         case EXCEPTION_ACCESS_VIOLATION:
             return "Access Violation (Segmentation Fault)";
@@ -231,7 +253,7 @@ constexpr auto kFaultToKeyword = [](AbstractFault fault) -> std::vector<std::str
 #endif
 
 [[nodiscard]] bool checkErrMsg(std::string_view s, AbstractFault fault) noexcept {
-#if defined(_WIN32)
+#ifdef _WIN32
     return checkErrMsgWin(s, fault);
 #else
     return checkErrMsgPosix(s, fault);
@@ -239,7 +261,7 @@ constexpr auto kFaultToKeyword = [](AbstractFault fault) -> std::vector<std::str
 }
 
 [[nodiscard]] int faultToCode(AbstractFault fault, bool withReRaise = true) noexcept {
-#if defined(_WIN32)
+#ifdef _WIN32
     return faultToCodeWin(fault);
 #else
     return faultToCodePosix(fault, withReRaise);

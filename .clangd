@@ -1,2 +1,5 @@
 CompileFlags:
-  Add: [-Iinclude, -std=c++20]
+  Remove: [-fno-keep-inline-dllexport]
+Diagnostics:
+  MissingIncludes: Strict
+  UnusedIncludes: Strict

@@ -1,28 +1,36 @@
 #include "fault/fault.hpp"
 
 #include "fault/attributes.h"
+#include "fault/config.h"
 #include "fault/fault.h"
 #include "fault/version.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <exception>
+#include <fileapi.h>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <mutex>
+#include <optional>
 #include <ranges>
 #include <source_location>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 #include <cpptrace/basic.hpp>
@@ -39,7 +47,6 @@
 #define WIN32_LEAN_AND_MEAN
 // clang-format off
 #include <windows.h>
-// #include <consoleapi.h>
 #include <errhandlingapi.h>
 #include <excpt.h>
 #include <handleapi.h>
@@ -47,6 +54,15 @@
 #include <strsafe.h>
 #include <synchapi.h>
 #include <dbghelp.h>
+#include <psdk_inc/_dbg_common.h>
+#include <stringapiset.h>
+#include <sysinfoapi.h>
+#include <processenv.h>
+#include <minwinbase.h>
+#include <minwindef.h>
+#include <winerror.h>
+#include <winnls.h>
+#include <winnt.h>
 // clang-format on
 #else
 #include <cstdio>
@@ -180,9 +196,9 @@ void fmt2d(char* buf, std::uint32_t val) noexcept {
 
 void getNowSafe(std::int64_t& outSec, std::int64_t& outNsec) noexcept {
 #ifdef _WIN32
-    FILETIME ft;
-    GetSystemTimePreciseAsFileTime(&ft);
-    ULARGE_INTEGER uli;
+    ::FILETIME ft;
+    ::GetSystemTimePreciseAsFileTime(&ft);
+    ::ULARGE_INTEGER uli;
     uli.LowPart = ft.dwLowDateTime;
     uli.HighPart = ft.dwHighDateTime;
 
@@ -192,20 +208,20 @@ void getNowSafe(std::int64_t& outSec, std::int64_t& outNsec) noexcept {
     outNsec = static_cast<std::int64_t>(((uli.QuadPart % 10000000ULL) * 100));
 #else
     struct timespec ts{};
-    clock_gettime(CLOCK_REALTIME, &ts);
+    ::clock_gettime(CLOCK_REALTIME, &ts);
     outSec = ts.tv_sec;
     outNsec = ts.tv_nsec;
 #endif
 }
 
-#if defined(__linux__)
+#ifdef __linux__
 
 inline void safePrint(const char* str, std::size_t len, int fd = STDERR_FILENO) noexcept {
-    write(fd, str, len);
+    ::write(fd, str, len);
 }
 
 inline void safePrint(const char* str, int fd = STDERR_FILENO) noexcept {
-    write(fd, str, std::strlen(str));
+    ::write(fd, str, std::strlen(str));
 }
 
 void safeWriteHex(std::uintptr_t value, int fd = STDERR_FILENO) noexcept {
@@ -220,27 +236,31 @@ void safeWriteHex(std::uintptr_t value, int fd = STDERR_FILENO) noexcept {
 
 #else
 
-const HANDLE hFileDefault = GetStdHandle(STD_ERROR_HANDLE);
+inline auto getStdHandle(::DWORD nStdHandle) noexcept {
+    return ::GetStdHandle(nStdHandle);
+}
+
+const ::HANDLE hFileDefault = getStdHandle(STD_ERROR_HANDLE);
 
 inline void safePrint(const char* str, std::size_t len, HANDLE hFile = hFileDefault) noexcept {
     if (str == nullptr) {
         return;
     }
-    DWORD written{};
-    WriteFile(hFile, str, static_cast<DWORD>(len), &written, nullptr);
+    ::DWORD written{};
+    ::WriteFile(hFile, str, static_cast<::DWORD>(len), &written, nullptr);
 }
 
 inline void safePrint(const char* str, HANDLE hFile = hFileDefault) noexcept {
     if (str == nullptr) {
         return;
     }
-    DWORD written{};
+    ::DWORD written{};
     // We use strlen here; it is safe as it only reads memory
-    WriteFile(hFile, str, static_cast<DWORD>(std::strlen(str)), &written, nullptr);
+    ::WriteFile(hFile, str, static_cast<::DWORD>(std::strlen(str)), &written, nullptr);
 }
 
 inline bool utf8ToUtf16Stack(const char* utf8, wchar_t* out, int outLen) noexcept {
-    const int written = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, out, outLen);
+    const int written = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, out, outLen);
     return written > 0;
 }
 
@@ -263,7 +283,7 @@ void writePreciseTimeSafe(char* buffer, std::size_t& offset, std::size_t capacit
     std::int64_t tvNSec{};
     getNowSafe(tvSec, tvNSec);
     std::array<char, 12> tempBuf{};
-    const auto daysSinceEpoch = static_cast<std::int64_t>(tvSec / 86400);
+    const auto daysSinceEpoch = static_cast<std::int64_t>(tvSec / 86400);  // NOLINT
     auto s = static_cast<std::uint32_t>(tvSec % 86400);
     fmt2d(tempBuf.data(), s / 3600);  // HH
     tempBuf[2] = ':';
@@ -317,10 +337,10 @@ void writePreciseTimeSafe(char* buffer, std::size_t& offset, std::size_t capacit
 }
 
 void safePrint(const cpptrace::safe_object_frame& frame,
-#if defined(__linux__)
+#ifdef __linux__
                int fd = STDERR_FILENO
 #else
-               HANDLE fd = GetStdHandle(STD_ERROR_HANDLE)
+               ::HANDLE fd = getStdHandle(STD_ERROR_HANDLE)
 #endif
                ) noexcept {
     safeWriteHex(frame.raw_address, fd);
@@ -416,7 +436,7 @@ v1::ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fil
         if (trace.frames.empty()) {
             return std::nullopt;
         }
-        return trace;
+        return std::optional{std::move(trace)};
 #if FAULT_EXCEPTIONS
     } catch (...) {
         return std::nullopt;
@@ -463,7 +483,7 @@ std::exception_ptr pendingException{nullptr};  // NOLINT
 std::mutex mutex;                              // NOLINT
 
 void saveException(std::string_view msg, const v1::ObjectTrace* customTrace) noexcept {
-    std::lock_guard lock{mutex};
+    std::scoped_lock lock{mutex};
     cpptrace::object_trace trace{};
     bool generateTrace{customTrace == nullptr};
     if (customTrace != nullptr) {
@@ -747,7 +767,7 @@ struct Config {
         const auto tmInfo = timeInit();
         const auto reportDirFlags = utils::setCrashWriteDir(
             config.crashDir, fileNameStr, crashPath, config.prefixDateOnFilename, tmInfo, ".log");
-#if defined(_WIN32)
+#ifdef _WIN32
         if (config.generateMiniDumpWindows &&
             utils::setCrashWriteDir(config.crashDir, fileNameStr, Windows::dumpPath,
                                     config.prefixDateOnFilename, tmInfo,
@@ -788,14 +808,14 @@ namespace ExitHandler {
 static_assert(std::atomic<bool>::is_always_lock_free,
               "std::atomic<bool> is not guaranteed to be async signal safe.");
 
-#if defined(__linux__)
+#ifdef __linux__
 std::array<char, 256> zenityPath{"/usr/bin/zenity"};    // NOLINT
 std::atomic<bool> canReadZenityPath{true};              // NOLINT
 std::array<char, 256> kDialogPath{"/usr/bin/kdialog"};  // NOLINT
 std::atomic<bool> canReadKDialogPath{true};             // NOLINT
 #endif
 
-#if defined(_MSC_VER)
+#ifdef _MSC_VER
 #define FAULT_FORCE_INLINE __forceinline
 #else
 #define FAULT_FORCE_INLINE __attribute__((always_inline)) inline
@@ -850,7 +870,7 @@ bool writeReport(std::string_view errContext,
     if (!config.isReportWritable) {
         return false;
     }
-#if defined(__linux__)
+#ifdef __linux__
     const int fd = open(config.crashPath.data(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd == -1) {
 #else
@@ -957,7 +977,7 @@ bool writeReport(std::string_view errContext,
         utils::safePrint(
             "Could not safely generate object trace (regular generation flag not activated)\n", fd);
     }
-#if defined(__linux__)
+#ifdef __linux__
     close(fd);
 #else
     CloseHandle(fd);
@@ -1938,11 +1958,11 @@ struct TerminateHandling {
                                            // throwing destructor)
             if (exPtr) {
                 std::rethrow_exception(exPtr);
-            } else {
-                utils::safeAppend(msg.data(), msgOffset, msg.size(), "Terminate called.");
-                utils::safeAppend(detail.data(), detailOffset, detail.size(),
-                                  "Terminate was reached without an active exception.\n");
             }
+            utils::safeAppend(msg.data(), msgOffset, msg.size(), "Terminate called.");
+            utils::safeAppend(detail.data(), detailOffset, detail.size(),
+                              "Terminate was reached without an active exception.\n");
+
         } catch (const std::exception& e) {
             utils::safeAppendFmt(msg.data(), msgOffset, msg.size(),
                                  "Terminate called due to an unhandled exception: {}.", e.what());
@@ -2093,7 +2113,7 @@ struct TerminateHandling {
     [[noreturn]] static void controlledShutdown(std::string_view message, std::string_view details,
                                                 const Settings& settings,
                                                 cpptrace::object_trace&& customTrace) noexcept {
-#if defined(__linux__)
+#ifdef __linux__
         constexpr int kTerminateCode{SIGABRT};
         LinuxHandling::fromTerminate(message, details, kTerminateCode, settings.printToStdErr,
                                      settings.writeReport, std::move(customTrace),
@@ -2434,7 +2454,7 @@ FailGuardBase::FailGuardBase(PanicHook callback, HookScope scope,
                              std::optional<std::source_location> loc)
     : scope_{scope}, uncaughtExps_{std::uncaught_exceptions()} {
     if (scope == HookScope::kThreadLocal) {
-        for (std::size_t i{0}; i < hook::kMaxPanicHooks; ++i) {
+        for (std::size_t i{0}; i < hook::threadCallbacks.size(); ++i) {
             if (!hook::threadCallbacks[i].f) {
                 hook::threadCallbacks[i] = {.f = std::move(callback), .loc = loc};
                 idx_ = i;
@@ -2444,7 +2464,7 @@ FailGuardBase::FailGuardBase(PanicHook callback, HookScope scope,
         }
         return;
     }
-    std::lock_guard lock{hook::globalMutex};
+    std::scoped_lock lock{hook::globalMutex};
     for (std::size_t i{0}; i < hook::kMaxPanicHooks; ++i) {
         if (!hook::globalCallbacks[i].f) {
             hook::globalCallbacks[i] = {.f = std::move(callback), .loc = loc};

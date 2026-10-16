@@ -1,18 +1,15 @@
+#include <cstdlib>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
-#include <thread>
-
-// clang-format off
-#include <fault/adapter/stacktrace.hpp>
-#include <fault/fault.hpp>
-// clang-format on
+#include <string>
 
 #include <cpptrace/basic.hpp>
 #include <cpptrace/cpptrace.hpp>
 #include <cpptrace/from_current.hpp>
 
 #include "fault/core.hpp"
+#include "fault/fault.hpp"
 
 namespace {
 

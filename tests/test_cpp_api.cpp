@@ -1,18 +1,20 @@
 #include <chrono>
+#include <cstdlib>
+#include <exception>
+#include <format>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
-
-// clang-format off
-#include <fault/adapter/stacktrace.hpp>
-#include <fault/fault.hpp>
-// clang-format on
 
 #include <cpptrace/basic.hpp>
 #include <cpptrace/cpptrace.hpp>
 #include <cpptrace/from_current.hpp>
 
 #include "fault/core.hpp"
+#include "fault/fault.hpp"
+#include "fault/format.hpp"
+#include "fault/macros.h"
 
 namespace {
 
@@ -70,8 +72,9 @@ int main() {
              .useUnsafeStacktraceOnSignalFallback = true,
              .generateMiniDumpWindows = true,
              .terminate = fault::Config::TerminateSettings{
-                 .enable = true,
-                 .userHook = [](std::string_view str, fault::ObjectTrace& trace) { throw 42; }}})) {
+                 .enable = true, .userHook = [](std::string_view str, fault::ObjectTrace& trace) {
+                     throw 42;  // NOLINT
+                 }}})) {
         std::cerr << "Failed to initialize fault.\n";
         return EXIT_FAILURE;
     }
@@ -97,6 +100,8 @@ int main() {
 
     // Expect: Always on, location information by default on debug builds
     fault::expect(result == 7, "Math is broken");
+    fault::expect(result == 7, "Math is broken. Got {} instead!", result);
+
     FAULT_EXPECT(result == 7,
                  "Math is broken");  // Only difference is expr 'result == 7' is also displayed
     // Or, with always source location

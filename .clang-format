@@ -16,27 +16,19 @@ SortIncludes: true
 IncludeBlocks: Regroup
 DerivePointerAlignment: false
 IncludeCategories:
-  #Priority 1: Main header
-  - Regex: '^".*\.h"$'
+  - Regex: '^<[^/]*>$'
     Priority: 1
     SortPriority: 1
-
-  # Priority 2: System/standard library headers
-  - Regex: '^<[^/]*>$'
+    CaseSensitive: true
+  
+  - Regex: '^<.*/'
     Priority: 2
     SortPriority: 2
     CaseSensitive: true
   
-  # Priority 3: System headers with subdirectories
-  - Regex: '^<.*/'
+  - Regex: '.*'
     Priority: 3
     SortPriority: 3
-    CaseSensitive: true
-  
-  # Priority 4: All other headers (project headers, third-party, etc.)
-  - Regex: '.*'
-    Priority: 4
-    SortPriority: 4
     CaseSensitive: true
 
 IncludeIsMainRegex: '.*'
