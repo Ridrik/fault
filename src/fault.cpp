@@ -1,10 +1,5 @@
 #include "fault/fault.hpp"
 
-#include "fault/attributes.h"
-#include "fault/config.h"
-#include "fault/fault.h"
-#include "fault/version.h"
-
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -16,7 +11,6 @@
 #include <cstring>
 #include <ctime>
 #include <exception>
-#include <fileapi.h>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -41,7 +35,10 @@
 #include <cpptrace/utils.hpp>
 
 #include "fault/adapter/stacktrace.hpp"
+#include "fault/attributes.h"
+#include "fault/config.h"
 #include "fault/core.hpp"
+#include "fault/version.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -56,6 +53,7 @@
 #include <dbghelp.h>
 #include <psdk_inc/_dbg_common.h>
 #include <stringapiset.h>
+#include <fileapi.h>
 #include <sysinfoapi.h>
 #include <processenv.h>
 #include <minwinbase.h>
@@ -67,8 +65,15 @@
 #else
 #include <cstdio>
 #include <fcntl.h>
+#include <signal.h>  // NOLINT
+#include <time.h>    // NOLINT
 #include <unistd.h>
 
+#include <bits/time.h>
+#include <bits/types/siginfo_t.h>
+#include <bits/types/sigset_t.h>
+#include <bits/types/stack_t.h>
+#include <sys/types.h>
 #include <sys/ucontext.h>
 #include <sys/wait.h>
 #endif

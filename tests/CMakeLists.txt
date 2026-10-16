@@ -63,7 +63,7 @@ target_compile_features(crash_master PRIVATE cxx_std_20)
 if(WIN32)
     target_link_libraries(crash_master PRIVATE mswsock)
 endif()
-target_link_libraries(crash_master PRIVATE fault::fault Boost::unit_test_framework Boost::system Boost::filesystem Boost::process)
+target_link_libraries(crash_master PRIVATE fault::fault Boost::unit_test_framework Boost::filesystem Boost::process)
 target_compile_features(crash_master PRIVATE cxx_std_20)
 target_compile_options(crash_master PRIVATE
     $<$<CXX_COMPILER_ID:GNU>:-w>

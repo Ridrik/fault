@@ -2,7 +2,12 @@
 #define FAULT_FORMAT_HPP
 
 #include <format>
+#include <source_location>
+#include <string_view>
+#include <type_traits>
 
+#include "fault/attributes.h"
+#include "fault/config.h"
 #include "fault/core.hpp"
 
 namespace fault {  // NOLINT(modernize-concat-nested-namespaces)

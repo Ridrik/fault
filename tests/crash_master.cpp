@@ -34,6 +34,8 @@
 #ifdef _WIN32
 #include <minwinbase.h>
 #include <minwindef.h>
+#else
+#include <csignal>
 #endif
 
 #include "fault/attributes.h"

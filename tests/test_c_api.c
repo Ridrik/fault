@@ -1,5 +1,8 @@
-#include <corecrt.h>
 #include <stdio.h>
+
+#ifdef _WIN32
+#include <corecrt.h>
+#endif
 
 #include "fault/fault.h"
 
