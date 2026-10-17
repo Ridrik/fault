@@ -3,6 +3,7 @@
 
 // NOLINTBEGIN(modernize-*)
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "fault/attributes.h"

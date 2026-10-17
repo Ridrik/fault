@@ -38,6 +38,7 @@
 #include "fault/attributes.h"
 #include "fault/config.h"
 #include "fault/core.hpp"
+#include "fault/fault.h"
 #include "fault/version.h"
 
 #ifdef _WIN32
@@ -212,7 +213,7 @@ void getNowSafe(std::int64_t& outSec, std::int64_t& outNsec) noexcept {
     outSec = static_cast<std::int64_t>((uli.QuadPart / 10000000ULL) - kUnixOffset);
     outNsec = static_cast<std::int64_t>(((uli.QuadPart % 10000000ULL) * 100));
 #else
-    struct timespec ts{};
+    struct ::timespec ts{};
     ::clock_gettime(CLOCK_REALTIME, &ts);
     outSec = ts.tv_sec;
     outNsec = ts.tv_nsec;
@@ -222,11 +223,11 @@ void getNowSafe(std::int64_t& outSec, std::int64_t& outNsec) noexcept {
 #ifdef __linux__
 
 inline void safePrint(const char* str, std::size_t len, int fd = STDERR_FILENO) noexcept {
-    ::write(fd, str, len);
+    [[maybe_unused]] ssize_t bytes = ::write(fd, str, len);
 }
 
 inline void safePrint(const char* str, int fd = STDERR_FILENO) noexcept {
-    ::write(fd, str, std::strlen(str));
+    [[maybe_unused]] ssize_t bytes = ::write(fd, str, std::strlen(str));
 }
 
 void safeWriteHex(std::uintptr_t value, int fd = STDERR_FILENO) noexcept {
@@ -247,7 +248,7 @@ inline auto getStdHandle(::DWORD nStdHandle) noexcept {
 
 const ::HANDLE hFileDefault = getStdHandle(STD_ERROR_HANDLE);
 
-inline void safePrint(const char* str, std::size_t len, HANDLE hFile = hFileDefault) noexcept {
+inline void safePrint(const char* str, std::size_t len, ::HANDLE hFile = hFileDefault) noexcept {
     if (str == nullptr) {
         return;
     }
@@ -255,7 +256,7 @@ inline void safePrint(const char* str, std::size_t len, HANDLE hFile = hFileDefa
     ::WriteFile(hFile, str, static_cast<::DWORD>(len), &written, nullptr);
 }
 
-inline void safePrint(const char* str, HANDLE hFile = hFileDefault) noexcept {
+inline void safePrint(const char* str, ::HANDLE hFile = hFileDefault) noexcept {
     if (str == nullptr) {
         return;
     }
@@ -269,7 +270,7 @@ inline bool utf8ToUtf16Stack(const char* utf8, wchar_t* out, int outLen) noexcep
     return written > 0;
 }
 
-void safeWriteHex(std::uintptr_t value, HANDLE hFile = hFileDefault) noexcept {
+void safeWriteHex(std::uintptr_t value, ::HANDLE hFile = hFileDefault) noexcept {
     std::array<char, 18> buf{};
     buf[0] = '0';
     buf[1] = 'x';
@@ -364,7 +365,7 @@ inline std::size_t strSafeCopy(char* dest, std::size_t maxLen, std::string_view 
 
 bool verifyWriteAccess(const std::string& p) noexcept {
     {
-        std::ofstream testFile(p, std::ios::out | std::ios::trunc);
+        auto testFile = std::ofstream{p, std::ios::out | std::ios::trunc};
         if (!testFile.is_open()) {
             return false;
         }
@@ -828,7 +829,7 @@ std::atomic<bool> canReadKDialogPath{true};             // NOLINT
 
 [[noreturn]] FAULT_FORCE_INLINE void shutdown(int code = EXIT_FAILURE) noexcept {
 #ifdef _WIN32
-    TerminateProcess(GetCurrentProcess(), code);
+    ::TerminateProcess(GetCurrentProcess(), code);
 #else
     std::_Exit(code);
 #endif
@@ -837,10 +838,10 @@ std::atomic<bool> canReadKDialogPath{true};             // NOLINT
 
 [[noreturn]] inline void parkThreadForever() noexcept {
 #ifdef _WIN32
-    Sleep(INFINITE);
+    ::Sleep(INFINITE);
 #else
     while (true) {
-        pause();
+        ::pause();
     }
 #endif
     // Safety net in case Pause/Sleep returns
@@ -876,21 +877,22 @@ bool writeReport(std::string_view errContext,
         return false;
     }
 #ifdef __linux__
-    const int fd = open(config.crashPath.data(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    const int fd = ::open(config.crashPath.data(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd == -1) {
 #else
     std::array<wchar_t, _internal::Config::kCrashPathSize> crashPathWide{};
-    const HANDLE fd = utils::utf8ToUtf16Stack(config.crashPath.data(), crashPathWide.data(),
-                                              crashPathWide.size())
-                          ? CreateFileW(crashPathWide.data(),  // File name
-                                        GENERIC_WRITE,         // Access mode
-                                        FILE_SHARE_READ,       // Share mode
-                                        nullptr,               // Security attributes
-                                        CREATE_ALWAYS,         // Creation disposition
-                                        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,  // Flags
-                                        nullptr  // Template
-                                        )
-                          : INVALID_HANDLE_VALUE;
+    const ::HANDLE fd =
+        utils::utf8ToUtf16Stack(config.crashPath.data(), crashPathWide.data(),
+                                crashPathWide.size())
+            ? ::CreateFileW(crashPathWide.data(),  // File name
+                            GENERIC_WRITE,         // Access mode
+                            FILE_SHARE_READ,       // Share mode
+                            nullptr,               // Security attributes
+                            CREATE_ALWAYS,         // Creation disposition
+                            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,  // Flags
+                            nullptr                                           // Template
+                            )
+            : INVALID_HANDLE_VALUE;
     if (fd == INVALID_HANDLE_VALUE) {
 #endif
         return false;
@@ -983,9 +985,9 @@ bool writeReport(std::string_view errContext,
             "Could not safely generate object trace (regular generation flag not activated)\n", fd);
     }
 #ifdef __linux__
-    close(fd);
+    ::close(fd);
 #else
-    CloseHandle(fd);
+    ::CloseHandle(fd);
 #endif
     return true;
 }
@@ -1007,29 +1009,29 @@ void showPopUp(const char* title, const char* message) noexcept {
             L"The application encountered a fatal error and must close. If the problem "
             "persists, please "
             "contact the program maintainer."};
-        MessageBoxW(nullptr, kWideMsg, L"Fatal Error",
-                    MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND | MB_TOPMOST);
+        ::MessageBoxW(nullptr, kWideMsg, L"Fatal Error",
+                      MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND | MB_TOPMOST);
     } else {
-        MessageBoxW(nullptr, messageWide.data(), titleWide.data(),
-                    MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND | MB_TOPMOST);
+        ::MessageBoxW(nullptr, messageWide.data(), titleWide.data(),
+                      MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND | MB_TOPMOST);
     }
 #else
     if (!ExitHandler::canReadZenityPath && !ExitHandler::canReadKDialogPath) {
         return;
     }
-    const pid_t pid = _Fork();  // Async signal safe.
+    const ::pid_t pid = ::_Fork();  // Async signal safe.
     if (pid == 0) {
         if (ExitHandler::canReadZenityPath) {
-            execl(ExitHandler::zenityPath.data(), "zenity", "--error", "--title", title,
-                  "--no-markup", "--text", message, nullptr);
+            ::execl(ExitHandler::zenityPath.data(), "zenity", "--error", "--title", title,
+                    "--no-markup", "--text", message, nullptr);
         } else if (ExitHandler::canReadKDialogPath) {
-            execl(ExitHandler::kDialogPath.data(), "kdialog", "--title", title, "--error", message,
-                  nullptr);
+            ::execl(ExitHandler::kDialogPath.data(), "kdialog", "--title", title, "--error",
+                    message, nullptr);
         }
         ExitHandler::shutdown(EXIT_FAILURE);
         FAULT_UNREACHABLE();
     } else if (pid > 0) {
-        waitpid(pid, nullptr, 0);  // Wait for user to close box
+        ::waitpid(pid, nullptr, 0);  // Wait for user to close box
     }
 #endif
 }
@@ -1038,19 +1040,19 @@ void showPopUp(const char* title, const char* message) noexcept {
 
 #ifdef _WIN32
 
-void safeAppendVEHInfo(struct _EXCEPTION_POINTERS* pExc, char* buffer, std::size_t& offset,
+void safeAppendVEHInfo(struct ::_EXCEPTION_POINTERS* pExc, char* buffer, std::size_t& offset,
                        std::size_t capacity) noexcept {
     if ((pExc == nullptr) || (pExc->ExceptionRecord == nullptr) ||
         (pExc->ContextRecord == nullptr)) {
         return;
     }
-    const CONTEXT& ctx = *pExc->ContextRecord;
+    const ::CONTEXT& ctx = *pExc->ContextRecord;
     std::array<char, 19> regBuff{};
 
     // 'Where'
     utils::safeAppend(buffer, offset, capacity, "\n\nRegisters (x64):");
 
-    static constexpr auto kAddReg = [](const char* name, DWORD64 val, char* buf, std::size_t& ofs,
+    static constexpr auto kAddReg = [](const char* name, ::DWORD64 val, char* buf, std::size_t& ofs,
                                        std::size_t cap, std::array<char, 19>& buff) {
         utils::safeAppend(buf, ofs, cap, name);
         utils::safeWriteHex(static_cast<std::uintptr_t>(val), buff);
@@ -1074,7 +1076,7 @@ void safeAppendVEHInfo(struct _EXCEPTION_POINTERS* pExc, char* buffer, std::size
     utils::safeAppend(buffer, offset, capacity, "\n");
 }
 
-const char* getExceptionString(DWORD code) noexcept {
+const char* getExceptionString(::DWORD code) noexcept {
     switch (code) {
         case EXCEPTION_ACCESS_VIOLATION:
             return "Access Violation (Segmentation Fault)";
@@ -1109,10 +1111,10 @@ struct WindowsHandling {
     static inline bool wasDumpWritten{false};
     static inline bool showPopUp{true};
     static thread_local inline std::sig_atomic_t tryCount{0};
-    static inline HANDLE hCrashEvent{nullptr};
-    static inline HANDLE hWatchdogThread{nullptr};
-    static constexpr DWORD kTimerMilliseconds{
-        static_cast<DWORD>(_internal::Config::kAlarmSeconds * 1000)};
+    static inline ::HANDLE hCrashEvent{nullptr};
+    static inline ::HANDLE hWatchdogThread{nullptr};
+    static constexpr ::DWORD kTimerMilliseconds{
+        static_cast<::DWORD>(_internal::Config::kAlarmSeconds * 1000)};
 
     static void popUpAction(bool exitAftewards = false) noexcept {
         bool expected{false};
@@ -1136,11 +1138,11 @@ struct WindowsHandling {
         }
     }
 
-    static DWORD WINAPI watchdogFunction(LPVOID /*lpParam*/) noexcept {
-        WaitForSingleObject(
+    static DWORD ::WINAPI watchdogFunction(::LPVOID /*lpParam*/) noexcept {
+        ::WaitForSingleObject(
             hCrashEvent,
             INFINITE);  // Waiting indefinitely until it is woken by the crashing process
-        Sleep(kTimerMilliseconds);
+        ::Sleep(kTimerMilliseconds);
         if (WindowsHandling::reportDone) {
             return EXIT_FAILURE;
         }
@@ -1168,31 +1170,31 @@ struct WindowsHandling {
         return true;
     }
 
-    static bool writeMiniDump(const PEXCEPTION_POINTERS exceptionPtrs = nullptr) noexcept {
+    static bool writeMiniDump(const ::PEXCEPTION_POINTERS exceptionPtrs = nullptr) noexcept {
         std::array<wchar_t, _internal::Config::Windows::dumpPath.size()> dumpPathW{};
-        const HANDLE hFile = utils::utf8ToUtf16Stack(_internal::Config::Windows::dumpPath.data(),
-                                                     dumpPathW.data(), dumpPathW.size())
-                                 ? CreateFileW(dumpPathW.data(), GENERIC_WRITE, 0, nullptr,
-                                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr)
-                                 : INVALID_HANDLE_VALUE;
+        const ::HANDLE hFile = utils::utf8ToUtf16Stack(_internal::Config::Windows::dumpPath.data(),
+                                                       dumpPathW.data(), dumpPathW.size())
+                                   ? CreateFileW(dumpPathW.data(), GENERIC_WRITE, 0, nullptr,
+                                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr)
+                                   : INVALID_HANDLE_VALUE;
         if (hFile == INVALID_HANDLE_VALUE) {
             return false;
         }
 
-        MINIDUMP_EXCEPTION_INFORMATION mei;
-        MINIDUMP_EXCEPTION_INFORMATION* pMei{nullptr};
+        ::MINIDUMP_EXCEPTION_INFORMATION mei;
+        ::MINIDUMP_EXCEPTION_INFORMATION* pMei{nullptr};
 
         if (exceptionPtrs != nullptr) {
-            mei.ThreadId = GetCurrentThreadId();
+            mei.ThreadId = ::GetCurrentThreadId();
             mei.ExceptionPointers = exceptionPtrs;
             mei.ClientPointers = FALSE;
             pMei = &mei;
         }
 
-        const auto res = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile,
-                                           MiniDumpNormal, pMei, nullptr, nullptr);
+        const auto res = ::MiniDumpWriteDump(::GetCurrentProcess(), ::GetCurrentProcessId(), hFile,
+                                             MiniDumpNormal, pMei, nullptr, nullptr);
 
-        CloseHandle(hFile);
+        ::CloseHandle(hFile);
 
         return res != 0;
     }
@@ -1234,7 +1236,7 @@ struct WindowsHandling {
         WindowsHandling::reportDone = true;
     }
 
-    static void writeSummaryMessageToBuffer(const PEXCEPTION_POINTERS pExc, std::string_view msg,
+    static void writeSummaryMessageToBuffer(const ::PEXCEPTION_POINTERS pExc, std::string_view msg,
                                             std::string_view details,
                                             std::size_t& offset) noexcept {
         {
@@ -1262,7 +1264,7 @@ struct WindowsHandling {
             offset = pszDestEnd - WindowsHandling::finalBuffer.data();
         }
         if ((pExc != nullptr) && (pExc->ExceptionRecord != nullptr)) {
-            const EXCEPTION_RECORD& rec = *pExc->ExceptionRecord;
+            const ::EXCEPTION_RECORD& rec = *pExc->ExceptionRecord;
 
             utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
                               WindowsHandling::finalBuffer.size(), "Exception Code: ");
@@ -1299,7 +1301,7 @@ struct WindowsHandling {
                           WindowsHandling::finalBuffer.size());
     }
 
-    static void commonActions(const PEXCEPTION_POINTERS exceptionInfo, std::size_t offset,
+    static void commonActions(const ::PEXCEPTION_POINTERS exceptionInfo, std::size_t offset,
                               bool printToStderr, bool writeReport,
                               const std::optional<cpptrace::object_trace>& customTrace,
                               bool resolveTrace) noexcept {
@@ -1315,7 +1317,7 @@ struct WindowsHandling {
         WindowsHandling::popUpAction(kExit);
     }
 
-    static void windowsCommonProcessSignalEvent(const PEXCEPTION_POINTERS exceptionInfo,
+    static void windowsCommonProcessSignalEvent(const ::PEXCEPTION_POINTERS exceptionInfo,
                                                 std::string_view description) noexcept {
         if (!WindowsHandling::checkPermissions()) {
             return;
@@ -1332,19 +1334,19 @@ struct WindowsHandling {
     }
 
     static void initHandles() noexcept {
-        WindowsHandling::hCrashEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+        WindowsHandling::hCrashEvent = ::CreateEvent(nullptr, TRUE, FALSE, nullptr);
         // Pre-spawn the thread while the system is healthy, it immediately goes to sleep until
         // needed
         WindowsHandling::hWatchdogThread =
-            CreateThread(nullptr, 0, WindowsHandling::watchdogFunction, nullptr, 0, nullptr);
+            ::CreateThread(nullptr, 0, WindowsHandling::watchdogFunction, nullptr, 0, nullptr);
         if (WindowsHandling::hWatchdogThread != nullptr) {
-            SetThreadPriority(WindowsHandling::hWatchdogThread, THREAD_PRIORITY_HIGHEST);
+            ::SetThreadPriority(WindowsHandling::hWatchdogThread, THREAD_PRIORITY_HIGHEST);
         }
     }
 
     [[noreturn]] static void winAbortHandler(int /*sig*/) noexcept {
-        constexpr DWORD kAbortCode{3};
-        constexpr PEXCEPTION_POINTERS kNoContextPtr{nullptr};
+        constexpr ::DWORD kAbortCode{3};
+        constexpr ::PEXCEPTION_POINTERS kNoContextPtr{nullptr};
         WindowsHandling::windowsCommonProcessSignalEvent(
             kNoContextPtr,
             "Abort called");  // trace, stdcerr error, gui popup
@@ -1352,8 +1354,9 @@ struct WindowsHandling {
         FAULT_UNREACHABLE();
     }
 
-    static LONG WINAPI windowsExceptionHandler(const PEXCEPTION_POINTERS exceptionInfo) noexcept {
-        const DWORD code = exceptionInfo->ExceptionRecord->ExceptionCode;
+    static LONG ::WINAPI windowsExceptionHandler(
+        const ::PEXCEPTION_POINTERS exceptionInfo) noexcept {
+        const ::DWORD code = exceptionInfo->ExceptionRecord->ExceptionCode;
         const bool fatal =
             code == EXCEPTION_STACK_OVERFLOW || code == EXCEPTION_ACCESS_VIOLATION ||
             code == EXCEPTION_ILLEGAL_INSTRUCTION || code == EXCEPTION_IN_PAGE_ERROR ||
@@ -1386,7 +1389,7 @@ struct WindowsHandling {
         }
         WindowsHandling::showPopUp = showPopUp;
         std::size_t offset{0};
-        constexpr PEXCEPTION_POINTERS kPExceptionInfo{nullptr};
+        constexpr ::PEXCEPTION_POINTERS kPExceptionInfo{nullptr};
         WindowsHandling::writeSummaryMessageToBuffer(kPExceptionInfo, msg, details, offset);
         WindowsHandling::commonActions(kPExceptionInfo, offset, printToStderr, writeReport,
                                        std::optional(std::move(customTrace)), resolveTrace);
@@ -1397,12 +1400,12 @@ struct WindowsHandling {
     static void setup(bool enableHandlers, bool enableShutdownRequest) noexcept {
         constexpr auto kBytesToReserve = static_cast<std::size_t>(64U * 1024U);
         auto stackSize = static_cast<ULONG>(kBytesToReserve);
-        SetThreadStackGuarantee(&stackSize);
+        ::SetThreadStackGuarantee(&stackSize);
         WindowsHandling::initHandles();
         WindowsHandling::tryCount =
             0;  // Explicit load (in case thread_local would behave in a lazy way)
         if (enableHandlers) {
-            SetUnhandledExceptionFilter(WindowsHandling::windowsExceptionHandler);
+            ::SetUnhandledExceptionFilter(WindowsHandling::windowsExceptionHandler);
             std::signal(SIGABRT, WindowsHandling::winAbortHandler);
         }
         if (enableShutdownRequest) {
@@ -1471,7 +1474,7 @@ inline const char* safePrintSiCode(int sig, int code) noexcept {
     FAULT_UNREACHABLE();
 }
 
-void safeAppendRegisters(const ucontext_t* ctx, char* buffer, std::size_t& offset,
+void safeAppendRegisters(const ::ucontext_t* ctx, char* buffer, std::size_t& offset,
                          std::size_t capacity) noexcept {
 #if defined(__x86_64__)
     if (ctx == nullptr) {
@@ -1555,7 +1558,7 @@ bool findProgramInPath(std::string_view programName, char* outBuffer,
 
             std::error_code ec;
             std::filesystem::path fullPath = std::filesystem::path(dir) / programName;
-            if (std::filesystem::exists(fullPath, ec) && access(fullPath.c_str(), X_OK) == 0) {
+            if (std::filesystem::exists(fullPath, ec) && ::access(fullPath.c_str(), X_OK) == 0) {
                 std::string absolutePath = fullPath.string();
 
                 if (absolutePath.length() < bufferSize) {
@@ -1581,16 +1584,16 @@ bool findProgramInPath(std::string_view programName, char* outBuffer,
 }
 
 struct LinuxHandling {
-    static_assert(std::atomic<pid_t>::is_always_lock_free,
+    static_assert(std::atomic<::pid_t>::is_always_lock_free,
                   "std::atomic<pid_t> may not be lock free. Remove std::atomic from it.");
 
-    static inline stack_t gAltstack{};
+    static inline ::stack_t gAltstack{};
 
    private:
     static inline std::array<char, 128> titleBuffer{};
     static inline std::array<char, 2048> finalBuffer{};
     static inline std::size_t offsetForMsg{0};
-    static inline std::atomic<pid_t> tracePid{-1};
+    static inline std::atomic<::pid_t> tracePid{-1};
     static inline std::atomic<bool> hasAnySignalBeenReceived{false};
     static thread_local inline std::sig_atomic_t tryCount{};
     static inline std::sig_atomic_t signal{-1};
@@ -1599,15 +1602,15 @@ struct LinuxHandling {
     static inline bool shouldReRaiseSignal{true};
 
     [[noreturn]] static void reRaiseSignal(int sig) noexcept {
-        struct sigaction sa{};
+        struct ::sigaction sa{};
         sa.sa_handler = SIG_DFL;
-        sigemptyset(&sa.sa_mask);
+        ::sigemptyset(&sa.sa_mask);
         sa.sa_flags = 0;
-        sigaction(sig, &sa, nullptr);
-        sigset_t set;
-        sigemptyset(&set);
-        sigaddset(&set, sig);
-        pthread_sigmask(SIG_UNBLOCK, &set, nullptr);
+        ::sigaction(sig, &sa, nullptr);
+        ::sigset_t set;
+        ::sigemptyset(&set);
+        ::sigaddset(&set, sig);
+        ::pthread_sigmask(SIG_UNBLOCK, &set, nullptr);
         std::raise(sig);
         ExitHandler::shutdown(128 + sig);
         FAULT_UNREACHABLE();
@@ -1616,7 +1619,7 @@ struct LinuxHandling {
     [[noreturn]] static void popUpAndExit([[maybe_unused]] int sig = -1) noexcept {
         if (LinuxHandling::tracePid > 0) {  // Something went wrong during trace logging, kill it as
                                             // to not become a zombie process
-            kill(LinuxHandling::tracePid, SIGKILL);
+            ::kill(LinuxHandling::tracePid, SIGKILL);
             LinuxHandling::tracePid = -1;
         }
         bool expected{false};
@@ -1676,7 +1679,7 @@ struct LinuxHandling {
                                     _internal::gInitTime.tvNsec, _internal::gInitTime.written);
     }
 
-    static void writeSummaryMessageToBuffer(int sig, const siginfo_t* info,
+    static void writeSummaryMessageToBuffer(int sig, const ::siginfo_t* info,
                                             std::size_t& offset) noexcept {
         {
             std::size_t titleOffset{0};
@@ -1742,7 +1745,7 @@ struct LinuxHandling {
                                     _internal::gInitTime.tvNsec, _internal::gInitTime.written);
     }
 
-    static void writeReportDetailsToBuffer(const ucontext_t* ctx, std::size_t& offset) noexcept {
+    static void writeReportDetailsToBuffer(const ::ucontext_t* ctx, std::size_t& offset) noexcept {
         safeAppendRegisters(ctx, LinuxHandling::finalBuffer.data(), offset,
                             LinuxHandling::finalBuffer.size());
     }
@@ -1802,7 +1805,7 @@ struct LinuxHandling {
         ++LinuxHandling::tryCount;
     }
 
-    [[noreturn]] static void linuxSignalHandler(int sig, siginfo_t* info, void* uctx) noexcept {
+    [[noreturn]] static void linuxSignalHandler(int sig, ::siginfo_t* info, void* uctx) noexcept {
         LinuxHandling::checkPermissions();
         LinuxHandling::signal = sig;
         LinuxHandling::showPopUp = _internal::config.showPopUp;
@@ -1810,7 +1813,7 @@ struct LinuxHandling {
         std::size_t offset{0};
         LinuxHandling::writeSummaryMessageToBuffer(LinuxHandling::signal, info, offset);
         LinuxHandling::offsetForMsg = offset;
-        LinuxHandling::writeReportDetailsToBuffer(static_cast<const ucontext_t*>(uctx), offset);
+        LinuxHandling::writeReportDetailsToBuffer(static_cast<const ::ucontext_t*>(uctx), offset);
         constexpr bool kResolveTrace{false};
         constexpr std::optional<cpptrace::object_trace> kTrace{std::nullopt};
         constexpr bool kWriteReport{true};
@@ -1822,22 +1825,22 @@ struct LinuxHandling {
     [[noreturn]] static void commonActions(std::size_t offset, bool printToStderr, bool writeReport,
                                            const std::optional<cpptrace::object_trace>& customTrace,
                                            bool resolveTrace) noexcept {
-        struct sigaction sa{};
-        sigfillset(&sa.sa_mask);
+        struct ::sigaction sa{};
+        ::sigfillset(&sa.sa_mask);
         sa.sa_handler = LinuxHandling::popUpAndExit;
-        sigemptyset(&sa.sa_mask);
+        ::sigemptyset(&sa.sa_mask);
         sa.sa_flags = 0;
-        sigaction(SIGALRM, &sa, nullptr);    // Protect against deadlocks
-        LinuxHandling::tracePid = _Fork();   // Async signal safe.
-        if (LinuxHandling::tracePid == 0) {  // Child process
+        ::sigaction(SIGALRM, &sa, nullptr);   // Protect against deadlocks
+        LinuxHandling::tracePid = ::_Fork();  // Async signal safe.
+        if (LinuxHandling::tracePid == 0) {   // Child process
             LinuxHandling::doWriteToFile(offset, printToStderr, writeReport, customTrace,
                                          resolveTrace);
             FAULT_UNREACHABLE();
         } else if (LinuxHandling::tracePid > 0) {  // Parent process
-            alarm(_internal::Config::kAlarmSeconds);
-            waitpid(LinuxHandling::tracePid, nullptr,
-                    0);  // Wait for trace collection, or until alarm hits
-            alarm(0);
+            ::alarm(_internal::Config::kAlarmSeconds);
+            ::waitpid(LinuxHandling::tracePid, nullptr,
+                      0);  // Wait for trace collection, or until alarm hits
+            ::alarm(0);
             LinuxHandling::tracePid = -1;
         }
         LinuxHandling::popUpAndExit();
@@ -1845,7 +1848,7 @@ struct LinuxHandling {
     }
 
    public:
-    [[nodiscard]] static pid_t getTracePid() noexcept {
+    [[nodiscard]] static ::pid_t getTracePid() noexcept {
         return LinuxHandling::tracePid;
     }
     [[nodiscard]] static bool hasAnySignalBeenTriggered() noexcept {
@@ -1891,16 +1894,16 @@ struct LinuxHandling {
         LinuxHandling::gAltstack.ss_sp = altstackMem.data();
         LinuxHandling::gAltstack.ss_size = sizeof(altstackMem);
         LinuxHandling::gAltstack.ss_flags = 0;
-        sigaltstack(&LinuxHandling::gAltstack, nullptr);
+        ::sigaltstack(&LinuxHandling::gAltstack, nullptr);
 
         // Signal handlers
-        struct sigaction sa{};
+        struct ::sigaction sa{};
         sa.sa_sigaction = LinuxHandling::linuxSignalHandler;
-        sigemptyset(&sa.sa_mask);
+        ::sigemptyset(&sa.sa_mask);
         sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
         const std::array<int, 5> sigs = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT};
         for (int s : sigs) {
-            sigaction(s, &sa, nullptr);
+            ::sigaction(s, &sa, nullptr);
         }
         if (enableShutdownRequest) {
             std::signal(SIGINT, [](int /*sig*/) { fault::set_shutdown_request(); });
@@ -2211,7 +2214,8 @@ struct TerminateHandling {
 
 void warmupCpptrace() noexcept {
     std::array<cpptrace::frame_ptr, 10> buffer{};
-    std::size_t _ = cpptrace::safe_generate_raw_trace(buffer.data(), buffer.size());
+    [[maybe_unused]] std::size_t frames =
+        cpptrace::safe_generate_raw_trace(buffer.data(), buffer.size());
     cpptrace::safe_object_frame frame{};
     cpptrace::get_safe_object_frame(buffer[0], &frame);
 }
