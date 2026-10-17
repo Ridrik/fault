@@ -124,6 +124,9 @@ struct InlineString {
     [[nodiscard]] constexpr const auto* getData() const noexcept {
         return data_.data();
     }
+    [[nodiscard]] constexpr auto* getData() noexcept {
+        return data_.data();
+    }
 
     [[nodiscard]] auto empty() const noexcept {
         return getSize() == 0;
@@ -797,7 +800,7 @@ void saveException(std::string_view msg, const v1::ObjectTrace* customTrace) noe
 #if FAULT_EXCEPTIONS
 std::optional<std::string> rethrowAndAppendSavedExceptionTrace(
     cpptrace::object_trace& baseTrace) noexcept {
-    std::lock_guard lock{mutex};
+    std::scoped_lock lock{mutex};
     if (pendingException == nullptr) {
         return std::nullopt;
     }
@@ -1306,40 +1309,36 @@ void showPopUp(const char* title, const char* message) noexcept {
 
 #ifdef _WIN32
 
-void safeAppendVEHInfo(struct ::_EXCEPTION_POINTERS* pExc, char* buffer, std::size_t& offset,
-                       std::size_t capacity) noexcept {
+void safeAppendVEHInfo(struct ::_EXCEPTION_POINTERS* pExc, utils::InlineStringSpan str) noexcept {
     if ((pExc == nullptr) || (pExc->ExceptionRecord == nullptr) ||
         (pExc->ContextRecord == nullptr)) {
         return;
     }
     const ::CONTEXT& ctx = *pExc->ContextRecord;
     std::array<char, 19> regBuff{};
+    str.append("\n\nRegisters (x64):");
 
-    // 'Where'
-    utils::safeAppend(buffer, offset, capacity, "\n\nRegisters (x64):");
-
-    static constexpr auto kAddReg = [](const char* name, ::DWORD64 val, char* buf, std::size_t& ofs,
-                                       std::size_t cap, std::array<char, 19>& buff) {
-        utils::safeAppend(buf, ofs, cap, name);
+    static constexpr auto kAddReg = [](const char* name, ::DWORD64 val, utils::InlineStringSpan str,
+                                       std::array<char, 19>& buff) {
+        str.append(name);
         utils::safeWriteHex(static_cast<std::uintptr_t>(val), buff);
-        utils::safeAppend(buf, ofs, cap, buff.data());
+        str.append(std::span{buff});
     };
 
-    kAddReg("\nRIP=", ctx.Rip, buffer, offset, capacity, regBuff);
-    kAddReg(" RSP=", ctx.Rsp, buffer, offset, capacity, regBuff);
-    kAddReg(" RBP=", ctx.Rbp, buffer, offset, capacity, regBuff);
-    kAddReg("\nRAX=", ctx.Rax, buffer, offset, capacity, regBuff);
-    kAddReg(" RBX=", ctx.Rbx, buffer, offset, capacity, regBuff);
-    kAddReg(" RCX=", ctx.Rcx, buffer, offset, capacity, regBuff);
-    kAddReg("\nRDX=", ctx.Rdx, buffer, offset, capacity, regBuff);
-    kAddReg(" RDI=", ctx.Rdi, buffer, offset, capacity, regBuff);
-    kAddReg(" RSI=", ctx.Rsi, buffer, offset, capacity, regBuff);
+    kAddReg("\nRIP=", ctx.Rip, str, regBuff);
+    kAddReg(" RSP=", ctx.Rsp, str, regBuff);
+    kAddReg(" RBP=", ctx.Rbp, str, regBuff);
+    kAddReg("\nRAX=", ctx.Rax, str, regBuff);
+    kAddReg(" RBX=", ctx.Rbx, str, regBuff);
+    kAddReg(" RCX=", ctx.Rcx, str, regBuff);
+    kAddReg("\nRDX=", ctx.Rdx, str, regBuff);
+    kAddReg(" RDI=", ctx.Rdi, str, regBuff);
+    kAddReg(" RSI=", ctx.Rsi, str, regBuff);
 
     // Flags and Error Context
-    utils::safeAppend(buffer, offset, capacity, "\nEFLAGS=");
+    str.append("\nEFLAGS=");
     utils::safeWriteHex(static_cast<std::uintptr_t>(ctx.EFlags), regBuff);
-    utils::safeAppend(buffer, offset, capacity, regBuff.data());
-    utils::safeAppend(buffer, offset, capacity, "\n");
+    str.appendMulti(std::span{regBuff}, '\n');
 }
 
 const char* getExceptionString(::DWORD code) noexcept {
@@ -1368,8 +1367,8 @@ const char* getExceptionString(::DWORD code) noexcept {
 
 struct WindowsHandling {
    private:
-    static inline std::array<char, 128> titleBuffer{};
-    static inline std::array<char, 2048> finalBuffer{};
+    static inline utils::InlineString<128> titleBuffer{};
+    static inline utils::InlineString<2048> finalBuffer{};
     static inline std::size_t offsetForMsg{0};
     static inline std::atomic<bool> hasAnyCodeBeenReceived{false};
     static inline std::atomic<bool> reportDone{false};
@@ -1391,9 +1390,9 @@ struct WindowsHandling {
         if (WindowsHandling::showPopUp) {
             if (WindowsHandling::offsetForMsg >=
                 std::strlen(_internal::config.baseErrorMessage.data())) {
-                WindowsHandling::finalBuffer[WindowsHandling::offsetForMsg] = '\0';
-                ExitHandler::showPopUp(WindowsHandling::titleBuffer.data(),
-                                       WindowsHandling::finalBuffer.data());
+                WindowsHandling::finalBuffer.setSize(WindowsHandling::offsetForMsg);
+                ExitHandler::showPopUp(WindowsHandling::titleBuffer.getData(),
+                                       WindowsHandling::finalBuffer.getData());
             } else {
                 ExitHandler::showPopUp("Fatal Error", _internal::config.baseErrorMessage.data());
             }
@@ -1404,7 +1403,7 @@ struct WindowsHandling {
         }
     }
 
-    static DWORD ::WINAPI watchdogFunction(::LPVOID /*lpParam*/) noexcept {
+    static ::DWORD WINAPI watchdogFunction(::LPVOID /*lpParam*/) noexcept {
         ::WaitForSingleObject(
             hCrashEvent,
             INFINITE);  // Waiting indefinitely until it is woken by the crashing process
@@ -1465,120 +1464,89 @@ struct WindowsHandling {
         return res != 0;
     }
 
-    static void doWriteReport(std::size_t size, bool printToStderr, bool writeReport,
+    static void doWriteReport(bool printToStderr, bool writeReport,
                               const std::optional<cpptrace::object_trace>& customTrace,
                               bool resolveTrace) noexcept {
-        const auto written = writeReport
-                                 ? ExitHandler::writeReport(
-                                       std::string_view{WindowsHandling::finalBuffer.data(), size},
-                                       customTrace, resolveTrace)
-                                 : false;
+        const auto written =
+            writeReport
+                ? ExitHandler::writeReport(std::string_view{WindowsHandling::finalBuffer.getData(),
+                                                            WindowsHandling::finalBuffer.getSize()},
+                                           customTrace, resolveTrace)
+                : false;
         if (printToStderr) {
-            std::array<char, 2048> stdErrBfr{};
-            std::size_t offset{0};
-            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(), "\n--- FAULT REPORT v");
-            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(), version::kString);
-            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(), " ---\n");
-            WindowsHandling::finalBuffer[WindowsHandling::offsetForMsg] = '\0';
-            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
-                              WindowsHandling::finalBuffer.data());  // stdcerr
+            utils::InlineString<2048> stdErrBfr{};
+            stdErrBfr.appendMulti("\n--- FAULT REPORT v", version::kString, " ---\n");
+            WindowsHandling::finalBuffer.setSize(WindowsHandling::offsetForMsg);
+            stdErrBfr.append(WindowsHandling::finalBuffer);
             if (written) {
-                utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(), "\nFull log at: ");
-                utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
-                                  _internal::config.crashPath.data());
+                stdErrBfr.appendMulti("\nFull log at: ", _internal::config.crashPath.data());
             } else if (writeReport) {
-                utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
-                                  "\nCould not generate report.");
+                stdErrBfr.append("\nCould not generate report.");
             }
             if (WindowsHandling::wasDumpWritten) {
-                utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
-                                  "\nMini dump generated at: ");
-                utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(),
-                                  _internal::Config::Windows::dumpPath.data());
+                stdErrBfr.appendMulti("\nMini dump generated at: ",
+                                      _internal::Config::Windows::dumpPath.data());
             }
-            utils::safeAppend(stdErrBfr.data(), offset, stdErrBfr.size(), "\n--- FAULT END ---\n");
-            ExitHandler::writeToStdErr(std::string_view{stdErrBfr.data(), offset});
+            stdErrBfr.append("\n--- FAULT END ---\n");
+            ExitHandler::writeToStdErr(std::string_view{stdErrBfr.getData(), stdErrBfr.getSize()});
         }
         WindowsHandling::reportDone = true;
     }
 
     static void writeSummaryMessageToBuffer(const ::PEXCEPTION_POINTERS pExc, std::string_view msg,
-                                            std::string_view details,
-                                            std::size_t& offset) noexcept {
-        {
-            std::size_t titleOffset{0};
-            utils::safeAppend(WindowsHandling::titleBuffer.data(), titleOffset,
-                              WindowsHandling::titleBuffer.size(),
-                              _internal::config.appName.data());
-            utils::safeAppend(WindowsHandling::titleBuffer.data(), titleOffset,
-                              WindowsHandling::titleBuffer.size(), " Fatal Error");
-        }
+                                            std::string_view details) noexcept {
+        WindowsHandling::titleBuffer.appendMulti(_internal::config.appName.data(), " Fatal Error");
         char* pszDestEnd = nullptr;
         std::size_t remaining{0};
         const auto filteredMsg = msg.empty() ? "<no message>" : msg;
-        if (!SUCCEEDED(StringCchPrintfExA(WindowsHandling::finalBuffer.data(),
-                                          WindowsHandling::finalBuffer.size(), &pszDestEnd,
-                                          &remaining, 0, "%s\n\nDescription: %s\n",
-                                          _internal::config.baseErrorMessage.data(),
-                                          filteredMsg.data(), filteredMsg.size()))) {
-            utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                              WindowsHandling::finalBuffer.size(),
-                              _internal::config.baseErrorMessage.data());
-            utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                              WindowsHandling::finalBuffer.size(), "\n");
+        WindowsHandling::finalBuffer.appendFmt(
+            "{}\n\nDescription: {}\n", std::string_view{_internal::config.baseErrorMessage.data()},
+            std::string_view{filteredMsg.data(), filteredMsg.size()});
+        /*if (!SUCCEEDED(::StringCchPrintfExA(WindowsHandling::finalBuffer.getData(),
+                                            WindowsHandling::finalBuffer.getSize(), &pszDestEnd,
+                                            &remaining, 0, "%s\n\nDescription: %s\n",
+                                            _internal::config.baseErrorMessage.data(),
+                                            filteredMsg.data(), filteredMsg.size()))) {
+            WindowsHandling::finalBuffer.appendMulti(_internal::config.baseErrorMessage.data(),
+                                                     '\n');
         } else {
-            offset = pszDestEnd - WindowsHandling::finalBuffer.data();
-        }
+            WindowsHandling::finalBuffer.setSize(pszDestEnd -
+                                                 WindowsHandling::finalBuffer.getData());
+        }*/
         if ((pExc != nullptr) && (pExc->ExceptionRecord != nullptr)) {
             const ::EXCEPTION_RECORD& rec = *pExc->ExceptionRecord;
-
-            utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                              WindowsHandling::finalBuffer.size(), "Exception Code: ");
-            utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                              WindowsHandling::finalBuffer.size(),
-                              static_cast<std::uintptr_t>(rec.ExceptionCode));
-            utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                              WindowsHandling::finalBuffer.size(), "\n");
+            WindowsHandling::finalBuffer.appendMulti(
+                "Exception Code: ", static_cast<std::uintptr_t>(rec.ExceptionCode), '\n');
             // If it's an Access Violation, ExceptionInformation[1] is the faulting address
             if (rec.ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec.NumberParameters >= 2) {
-                utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                                  WindowsHandling::finalBuffer.size(), "Fault Address: ");
-                utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                                  WindowsHandling::finalBuffer.size(),
-                                  static_cast<std::uintptr_t>(rec.ExceptionInformation[1]));
-                utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                                  WindowsHandling::finalBuffer.size(), "\n");
+                WindowsHandling::finalBuffer.appendMulti(
+                    "Fault Address: ", static_cast<std::uintptr_t>(rec.ExceptionInformation[1]),
+                    '\n');
             }
         }
-        utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                          WindowsHandling::finalBuffer.size(), "\n");
-        utils::writePreciseTimeSafe(WindowsHandling::finalBuffer.data(), offset,
-                                    WindowsHandling::finalBuffer.size(),
+        WindowsHandling::finalBuffer.append('\n');
+        utils::writePreciseTimeSafe(WindowsHandling::finalBuffer.span(),
                                     _internal::gInitTime.str.data(), _internal::gInitTime.tvSec,
                                     _internal::gInitTime.tvNsec, _internal::gInitTime.written);
-        WindowsHandling::offsetForMsg = offset;
+        WindowsHandling::offsetForMsg = WindowsHandling::finalBuffer.getSize();
         if (!details.empty()) {
-            utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                              WindowsHandling::finalBuffer.size(), "\nTechnical comments:\n");
-            utils::safeAppend(WindowsHandling::finalBuffer.data(), offset,
-                              WindowsHandling::finalBuffer.size(), details.data(), details.size());
+            WindowsHandling::finalBuffer.appendMulti("\nTechnical comments:\n",
+                                                     std::span{details.data(), details.size()});
         }
-        safeAppendVEHInfo(pExc, WindowsHandling::finalBuffer.data(), offset,
-                          WindowsHandling::finalBuffer.size());
+        safeAppendVEHInfo(pExc, WindowsHandling::finalBuffer.span());
     }
 
-    static void commonActions(const ::PEXCEPTION_POINTERS exceptionInfo, std::size_t offset,
-                              bool printToStderr, bool writeReport,
+    static void commonActions(const ::PEXCEPTION_POINTERS exceptionInfo, bool printToStderr,
+                              bool writeReport,
                               const std::optional<cpptrace::object_trace>& customTrace,
                               bool resolveTrace) noexcept {
         if (hCrashEvent != nullptr && hCrashEvent != INVALID_HANDLE_VALUE) {
-            SetEvent(hCrashEvent);
+            ::SetEvent(hCrashEvent);
         }
         if (_internal::Config::Windows::canWriteDump) {
             WindowsHandling::wasDumpWritten = WindowsHandling::writeMiniDump(exceptionInfo);
         }
-        WindowsHandling::doWriteReport(offset, printToStderr, writeReport, customTrace,
-                                       resolveTrace);
+        WindowsHandling::doWriteReport(printToStderr, writeReport, customTrace, resolveTrace);
         constexpr bool kExit{false};
         WindowsHandling::popUpAction(kExit);
     }
@@ -1589,13 +1557,12 @@ struct WindowsHandling {
             return;
         }
         WindowsHandling::showPopUp = _internal::config.showPopUp;
-        std::size_t offset{0};
         constexpr std::string_view kDetails{};
-        WindowsHandling::writeSummaryMessageToBuffer(exceptionInfo, description, kDetails, offset);
+        WindowsHandling::writeSummaryMessageToBuffer(exceptionInfo, description, kDetails);
         constexpr bool kWriteReport{true};
         constexpr bool kResolveTrace{false};
         const std::optional<cpptrace::object_trace> kTrace{std::nullopt};
-        WindowsHandling::commonActions(exceptionInfo, offset, _internal::config.printMsgToStdErr,
+        WindowsHandling::commonActions(exceptionInfo, _internal::config.printMsgToStdErr,
                                        kWriteReport, kTrace, kResolveTrace);
     }
 
@@ -1620,8 +1587,8 @@ struct WindowsHandling {
         FAULT_UNREACHABLE();
     }
 
-    static LONG ::WINAPI windowsExceptionHandler(
-        const ::PEXCEPTION_POINTERS exceptionInfo) noexcept {
+    static ::LONG WINAPI
+    windowsExceptionHandler(const ::PEXCEPTION_POINTERS exceptionInfo) noexcept {
         const ::DWORD code = exceptionInfo->ExceptionRecord->ExceptionCode;
         const bool fatal =
             code == EXCEPTION_STACK_OVERFLOW || code == EXCEPTION_ACCESS_VIOLATION ||
@@ -1654,10 +1621,9 @@ struct WindowsHandling {
             FAULT_UNREACHABLE();
         }
         WindowsHandling::showPopUp = showPopUp;
-        std::size_t offset{0};
         constexpr ::PEXCEPTION_POINTERS kPExceptionInfo{nullptr};
-        WindowsHandling::writeSummaryMessageToBuffer(kPExceptionInfo, msg, details, offset);
-        WindowsHandling::commonActions(kPExceptionInfo, offset, printToStderr, writeReport,
+        WindowsHandling::writeSummaryMessageToBuffer(kPExceptionInfo, msg, details);
+        WindowsHandling::commonActions(kPExceptionInfo, printToStderr, writeReport,
                                        std::optional(std::move(customTrace)), resolveTrace);
         ExitHandler::shutdown(code);
         FAULT_UNREACHABLE();
