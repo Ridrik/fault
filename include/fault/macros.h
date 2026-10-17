@@ -3,6 +3,12 @@
 
 #include "fault/attributes.h"
 
+#if FAULT_API_VERSION == 1
+#define MAYBE_INLINED_NAMESPACE_V1 inline namespace v1
+#else
+#define MAYBE_INLINED_NAMESPACE_V1 namespace v1
+#endif
+
 // NOLINTBEGIN
 #define FAULT_VERIFY(cond, ...)                         \
     do {                                                \

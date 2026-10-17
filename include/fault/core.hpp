@@ -150,547 +150,548 @@ constexpr std::string_view kDefaultErrorMessage{
     "The application encountered a fatal error and must close. If the problem "
     "persists, please "
     "contact the program maintainer."};
-#if FAULT_API_VERSION == 1
-inline
-#endif
-    namespace v1 {
 
-/**
- * @brief Returns wether fault has a saved exception from fault::save_traced_exception.
- *
- */
-FAULT_NODISCARD FAULT_EXPORT bool has_saved_traced_exception() noexcept;
+MAYBE_INLINED_NAMESPACE_V1 {
+    /**
+     * @brief Returns wether fault has a saved exception from fault::save_traced_exception.
+     *
+     */
+    FAULT_NODISCARD FAULT_EXPORT bool has_saved_traced_exception() noexcept;
 
-struct FAULT_EXPORT Frame {
-    std::uintptr_t rawAddress{};
-    std::uintptr_t objAddress{};
-    std::string objPath;
-};
-
-struct FAULT_EXPORT ObjectTrace {
-    std::vector<Frame> frames;
-};
-
-using TerminateHook = void (*)(std::string_view userMessage, ObjectTrace& objectTrace);
-
-enum class ConfigWarning : std::uint8_t {
-    kNone = 0,
-    kAlreadyInitialized = 1 << 0,
-    kBaseErrMsgTruncated = 1 << 1,
-    kInvalidPath = 1 << 2,
-    kReportPathTooLong = 1 << 3,
-    kReportPathWriteTestFailed = 1 << 4,
-    kInternalError = 1 << 5,
-};
-
-constexpr ConfigWarning operator|(ConfigWarning a, ConfigWarning b) {
-    return static_cast<ConfigWarning>(static_cast<std::uint8_t>(a) | static_cast<std::uint8_t>(b));
-}
-
-struct FAULT_EXPORT Config {
-    struct TerminateSettings {
-        bool enable{true};
-        TerminateHook userHook{nullptr};
+    struct FAULT_EXPORT Frame {
+        std::uintptr_t rawAddress{};
+        std::uintptr_t objAddress{};
+        std::string objPath;
     };
-    struct SignalSettings {
-        bool enable{true};
-        bool raiseDefaultAfterwards{
-            true};  // Raises default signal after handling it. Only relevant on linux. For non
-                    // posix signals (terminate handler, panic and assert failures), SIGABRT is
-                    // raised instead.
-        bool storeShutdownRequests{true};  // Registers SIGINT & SIGTERM to store shutdown
-                                           // request (no action is actually taken)
-    };
-    struct PanicSettings {
-        bool printMsgToStdErr{true};
-        bool showPopUp{true};
-        bool writeReport{true};
-    };
-    std::string_view appName;
-    std::string_view buildID;
-    std::string_view crashDir;
-    std::string_view reportBaseFileName{"crash_report"};
-    bool prefixDateOnFilename{true};
-    std::string_view baseErrorMsg{kDefaultErrorMessage};
-    bool showPopUp{true};
-    bool printMsgToStdErr{true};
-    bool useUnsafeStacktraceOnSignalFallback{false};
-    bool resolveNonSignalTrace{false};
-    bool generateMiniDumpWindows{true};
-    SignalSettings signal{};
-    TerminateSettings terminate{};
-    PanicSettings panic{};
-};
 
-struct InitResult {
-    bool success{true};
-    ConfigWarning warnings{ConfigWarning::kNone};
+    struct FAULT_EXPORT ObjectTrace {
+        std::vector<Frame> frames;
+    };
 
-    explicit operator bool() const {
-        return success;
+    using TerminateHook = void (*)(std::string_view userMessage, ObjectTrace& objectTrace);
+
+    enum class ConfigWarning : std::uint8_t {
+        kNone = 0,
+        kAlreadyInitialized = 1 << 0,
+        kBaseErrMsgTruncated = 1 << 1,
+        kInvalidPath = 1 << 2,
+        kReportPathTooLong = 1 << 3,
+        kReportPathWriteTestFailed = 1 << 4,
+        kInternalError = 1 << 5,
+    };
+
+    constexpr ConfigWarning operator|(ConfigWarning a, ConfigWarning b) {
+        return static_cast<ConfigWarning>(static_cast<std::uint8_t>(a) |
+                                          static_cast<std::uint8_t>(b));
     }
-};
 
-using PanicHook = std::function<std::string()>;
+    struct FAULT_EXPORT Config {
+        struct TerminateSettings {
+            bool enable{true};
+            TerminateHook userHook{nullptr};
+        };
+        struct SignalSettings {
+            bool enable{true};
+            bool raiseDefaultAfterwards{
+                true};  // Raises default signal after handling it. Only relevant on linux. For non
+                        // posix signals (terminate handler, panic and assert failures), SIGABRT is
+                        // raised instead.
+            bool storeShutdownRequests{true};  // Registers SIGINT & SIGTERM to store shutdown
+                                               // request (no action is actually taken)
+        };
+        struct PanicSettings {
+            bool printMsgToStdErr{true};
+            bool showPopUp{true};
+            bool writeReport{true};
+        };
+        std::string_view appName;
+        std::string_view buildID;
+        std::string_view crashDir;
+        std::string_view reportBaseFileName{"crash_report"};
+        bool prefixDateOnFilename{true};
+        std::string_view baseErrorMsg{kDefaultErrorMessage};
+        bool showPopUp{true};
+        bool printMsgToStdErr{true};
+        bool useUnsafeStacktraceOnSignalFallback{false};
+        bool resolveNonSignalTrace{false};
+        bool generateMiniDumpWindows{true};
+        SignalSettings signal{};
+        TerminateSettings terminate{};
+        PanicSettings panic{};
+    };
 
-enum class HookScope : std::uint8_t { kThreadLocal, kGlobal };
+    struct InitResult {
+        bool success{true};
+        ConfigWarning warnings{ConfigWarning::kNone};
 
-/**
- * @brief Provides a wrapper for user callback in RAII-style mechanism, to be evoked if a panic
- * (including assertion failures) or std::terminate is called while this object is alive. The
- * callback returns a string, which will be appended to the details section of the report. The
- * callback is automatically deregistered once the guard goes out of scope, or if user explicitly
- * releases it.
- *
- */
-struct FAULT_EXPORT PanicGuardBase {
-   public:
-    /**
-     * @brief Construct a new Panic Guard object
-     *
-     * @param callback callback to be evoked on fault::panic or terminate (if installed)
-     * @param scope scope in which it should be evoked. Defaults to thread local
-     */
-    explicit PanicGuardBase(PanicHook callback, HookScope scope = HookScope::kThreadLocal,
-                            const std::optional<std::source_location>& loc = std::nullopt);
-    ~PanicGuardBase() noexcept;
-    PanicGuardBase(const PanicGuardBase&) = delete;
-    PanicGuardBase& operator=(const PanicGuardBase&) = delete;
-    PanicGuardBase(PanicGuardBase&&) = delete;
-    PanicGuardBase& operator=(PanicGuardBase&&) = delete;
+        explicit operator bool() const {
+            return success;
+        }
+    };
 
-    /**
-     * @brief releases the guard's callback from registry, deactivating the guard as well
-     *
-     */
-    void release() noexcept;
+    using PanicHook = std::function<std::string()>;
 
-   private:
-    std::size_t idx_{0};
-    HookScope scope_;
-    bool active_{false};
-};
-
-struct FAULT_EXPORT PanicGuard : public PanicGuardBase {
-   public:
-    explicit PanicGuard(PanicHook callback, HookScope scope = HookScope::kThreadLocal)
-        : PanicGuardBase{std::move(callback), scope, std::nullopt} {}
-};
-
-struct FAULT_EXPORT PanicGuardAt : public PanicGuardBase {
-   public:
-    explicit PanicGuardAt(PanicHook callback, HookScope scope = HookScope::kThreadLocal,
-                          std::source_location loc = std::source_location::current())
-        : PanicGuardBase{std::move(callback), scope, loc} {}
-};
-
-/**
- * @brief Provides a wrapper for user callback in RAII-style mechanism, to be evoked if an exception
- * is being subject to an unwind process during this object's destruction (i.e a throw
- * inside a try/catch)
- *
- */
-struct FAULT_EXPORT UnwindGuardBase {
-   public:
-    /**
-     * @brief Construct a new Unwind Guard object
-     *
-     * @param callback callback to be evoked on unwind
-     * @param loc optional source location to be printed to report
-     */
-    explicit UnwindGuardBase(PanicHook callback,
-                             std::optional<std::source_location> loc = std::nullopt);
-    ~UnwindGuardBase() noexcept;
-    UnwindGuardBase(const UnwindGuardBase&) = delete;
-    UnwindGuardBase& operator=(const UnwindGuardBase&) = delete;
-    UnwindGuardBase(UnwindGuardBase&&) = delete;
-    UnwindGuardBase& operator=(UnwindGuardBase&&) = delete;
+    enum class HookScope : std::uint8_t { kThreadLocal, kGlobal };
 
     /**
-     * @brief releases the guard, deactivating its callback.
+     * @brief Provides a wrapper for user callback in RAII-style mechanism, to be evoked if a panic
+     * (including assertion failures) or std::terminate is called while this object is alive. The
+     * callback returns a string, which will be appended to the details section of the report. The
+     * callback is automatically deregistered once the guard goes out of scope, or if user
+     * explicitly releases it.
      *
      */
-    void release() noexcept;
+    struct FAULT_EXPORT PanicGuardBase {
+       public:
+        /**
+         * @brief Construct a new Panic Guard object
+         *
+         * @param callback callback to be evoked on fault::panic or terminate (if installed)
+         * @param scope scope in which it should be evoked. Defaults to thread local
+         */
+        explicit PanicGuardBase(PanicHook callback, HookScope scope = HookScope::kThreadLocal,
+                                const std::optional<std::source_location>& loc = std::nullopt);
+        ~PanicGuardBase() noexcept;
+        PanicGuardBase(const PanicGuardBase&) = delete;
+        PanicGuardBase& operator=(const PanicGuardBase&) = delete;
+        PanicGuardBase(PanicGuardBase&&) = delete;
+        PanicGuardBase& operator=(PanicGuardBase&&) = delete;
+
+        /**
+         * @brief releases the guard's callback from registry, deactivating the guard as well
+         *
+         */
+        void release() noexcept;
+
+       private:
+        std::size_t idx_{0};
+        HookScope scope_;
+        bool active_{false};
+    };
+
+    struct FAULT_EXPORT PanicGuard : public PanicGuardBase {
+       public:
+        explicit PanicGuard(PanicHook callback, HookScope scope = HookScope::kThreadLocal)
+            : PanicGuardBase{std::move(callback), scope, std::nullopt} {}
+    };
+
+    struct FAULT_EXPORT PanicGuardAt : public PanicGuardBase {
+       public:
+        explicit PanicGuardAt(PanicHook callback, HookScope scope = HookScope::kThreadLocal,
+                              std::source_location loc = std::source_location::current())
+            : PanicGuardBase{std::move(callback), scope, loc} {}
+    };
 
     /**
-     * @brief Resets fault global buffer on all unwind guard callback messages.
+     * @brief Provides a wrapper for user callback in RAII-style mechanism, to be evoked if an
+     * exception is being subject to an unwind process during this object's destruction (i.e a throw
+     * inside a try/catch)
      *
      */
-    static void resetBuffer() noexcept;
+    struct FAULT_EXPORT UnwindGuardBase {
+       public:
+        /**
+         * @brief Construct a new Unwind Guard object
+         *
+         * @param callback callback to be evoked on unwind
+         * @param loc optional source location to be printed to report
+         */
+        explicit UnwindGuardBase(PanicHook callback,
+                                 std::optional<std::source_location> loc = std::nullopt);
+        ~UnwindGuardBase() noexcept;
+        UnwindGuardBase(const UnwindGuardBase&) = delete;
+        UnwindGuardBase& operator=(const UnwindGuardBase&) = delete;
+        UnwindGuardBase(UnwindGuardBase&&) = delete;
+        UnwindGuardBase& operator=(UnwindGuardBase&&) = delete;
 
-   private:
-    PanicHook callback_;
-    std::optional<std::source_location> sourceLoc_;
-    int uncaughtExps_;
-};
+        /**
+         * @brief releases the guard, deactivating its callback.
+         *
+         */
+        void release() noexcept;
 
-struct FAULT_EXPORT UnwindGuard : public UnwindGuardBase {
-   public:
-    explicit UnwindGuard(PanicHook callback) : UnwindGuardBase{std::move(callback), std::nullopt} {}
-};
+        /**
+         * @brief Resets fault global buffer on all unwind guard callback messages.
+         *
+         */
+        static void resetBuffer() noexcept;
 
-struct FAULT_EXPORT UnwindGuardAt : public UnwindGuardBase {
-   public:
-    explicit UnwindGuardAt(PanicHook callback,
-                           std::source_location loc = std::source_location::current())
-        : UnwindGuardBase{std::move(callback), loc} {}
-};
+       private:
+        PanicHook callback_;
+        std::optional<std::source_location> sourceLoc_;
+        int uncaughtExps_;
+    };
 
-/**
- * @brief Provides a wrapper for user callback in RAII-style mechanism, to be evoked if either an
-exception
- * is being subject to an unwind process during this object's destruction (i.e a throw
- * inside a try/catch), or if a panic or std::terminate is called while within scope of this object.
- * This Guard can be seen as an unification of the PanicGuard and UnwindGuard
- *
- */
-struct FAULT_EXPORT FailGuardBase {
-   public:
-    /**
-     * @brief Construct a new Failure Guard object
-     *
-     * @param callback callback to be evoked on unwind or panic
-     * @param loc optional source location to be printed to report
-     */
-    explicit FailGuardBase(PanicHook callback, HookScope scope = HookScope::kThreadLocal,
-                           std::optional<std::source_location> loc = std::nullopt);
-    FailGuardBase(const FailGuardBase&) = delete;
-    FailGuardBase& operator=(const FailGuardBase&) = delete;
-    FailGuardBase(FailGuardBase&&) = delete;
-    FailGuardBase& operator=(FailGuardBase&&) = delete;
+    struct FAULT_EXPORT UnwindGuard : public UnwindGuardBase {
+       public:
+        explicit UnwindGuard(PanicHook callback)
+            : UnwindGuardBase{std::move(callback), std::nullopt} {}
+    };
 
-    ~FailGuardBase() noexcept;
-
-    /**
-     * @brief releases the guard, deactivating its callback.
-     *
-     */
-    void release() noexcept;
+    struct FAULT_EXPORT UnwindGuardAt : public UnwindGuardBase {
+       public:
+        explicit UnwindGuardAt(PanicHook callback,
+                               std::source_location loc = std::source_location::current())
+            : UnwindGuardBase{std::move(callback), loc} {}
+    };
 
     /**
-     * @brief Resets fault global buffer on all unwind guard callback messages.
+     * @brief Provides a wrapper for user callback in RAII-style mechanism, to be evoked if either
+    an exception
+     * is being subject to an unwind process during this object's destruction (i.e a throw
+     * inside a try/catch), or if a panic or std::terminate is called while within scope of this
+    object.
+     * This Guard can be seen as an unification of the PanicGuard and UnwindGuard
      *
      */
-    static void resetBuffer() noexcept;
+    struct FAULT_EXPORT FailGuardBase {
+       public:
+        /**
+         * @brief Construct a new Failure Guard object
+         *
+         * @param callback callback to be evoked on unwind or panic
+         * @param loc optional source location to be printed to report
+         */
+        explicit FailGuardBase(PanicHook callback, HookScope scope = HookScope::kThreadLocal,
+                               std::optional<std::source_location> loc = std::nullopt);
+        FailGuardBase(const FailGuardBase&) = delete;
+        FailGuardBase& operator=(const FailGuardBase&) = delete;
+        FailGuardBase(FailGuardBase&&) = delete;
+        FailGuardBase& operator=(FailGuardBase&&) = delete;
 
-   private:
-    std::size_t idx_{0};
-    HookScope scope_;
-    int uncaughtExps_;
-    bool active_{false};
-};
+        ~FailGuardBase() noexcept;
 
-struct FAULT_EXPORT FailGuard : public FailGuardBase {
-   public:
-    explicit FailGuard(PanicHook callback, HookScope scope = HookScope::kThreadLocal)
-        : FailGuardBase{std::move(callback), scope, std::nullopt} {}
-};
+        /**
+         * @brief releases the guard, deactivating its callback.
+         *
+         */
+        void release() noexcept;
 
-struct FAULT_EXPORT FailGuardAt : public FailGuardBase {
-   public:
-    explicit FailGuardAt(PanicHook callback, HookScope scope = HookScope::kThreadLocal,
-                         std::source_location loc = std::source_location::current())
-        : FailGuardBase{std::move(callback), scope, loc} {}
-};
+        /**
+         * @brief Resets fault global buffer on all unwind guard callback messages.
+         *
+         */
+        static void resetBuffer() noexcept;
 
-/**
- * @brief Initializes Fault library. Call this to setup signal handlers, exception handlers, and
- * setup additional general parameters. Also recommended to call before using any assertion or
- * panic utilities.
- *
- * @param config configuration options
- * @return initialization status, along with warning flags. Initialization may only fail if
- * messages/paths arguments exceed buffer sizes, or if the report location path is invalid.
- */
-FAULT_EXPORT InitResult init(const Config& config = {}) noexcept;
+       private:
+        std::size_t idx_{0};
+        HookScope scope_;
+        int uncaughtExps_;
+        bool active_{false};
+    };
 
-/**
- * @brief Saves a traced exception, which will later automatically be appended on panic or
- * std::terminate handling.
- * Example: Save a traced exception from a thread, signal main thread with shutdown request,
- * main thread does cleanup and panics if exception is saved
- *
- * @note Thread-safe
- * @note Not async-signal-safe (implied)
- */
-FAULT_EXPORT void save_traced_exception(std::string_view msg,
-                                        const ObjectTrace* customTrace = nullptr) noexcept;
+    struct FAULT_EXPORT FailGuard : public FailGuardBase {
+       public:
+        explicit FailGuard(PanicHook callback, HookScope scope = HookScope::kThreadLocal)
+            : FailGuardBase{std::move(callback), scope, std::nullopt} {}
+    };
 
-inline void save_traced_exception(std::string_view msg,
-                                  const std::optional<ObjectTrace>& customTrace) noexcept {
-    save_traced_exception(msg, customTrace.has_value() ? &*customTrace : nullptr);
-}
+    struct FAULT_EXPORT FailGuardAt : public FailGuardBase {
+       public:
+        explicit FailGuardAt(PanicHook callback, HookScope scope = HookScope::kThreadLocal,
+                             std::source_location loc = std::source_location::current())
+            : FailGuardBase{std::move(callback), scope, loc} {}
+    };
 
-/**
- * @brief panic implementation
- *
- * @param message message to be displayed on report, stderr and popup
- * @param customTrace Optional bject trace to be logged instead of default generated one.
- */
-[[noreturn]] FAULT_EXPORT void panic_impl(std::string_view message,
-                                          const ObjectTrace* customTrace = nullptr) noexcept;
+    /**
+     * @brief Initializes Fault library. Call this to setup signal handlers, exception handlers, and
+     * setup additional general parameters. Also recommended to call before using any assertion or
+     * panic utilities.
+     *
+     * @param config configuration options
+     * @return initialization status, along with warning flags. Initialization may only fail if
+     * messages/paths arguments exceed buffer sizes, or if the report location path is invalid.
+     */
+    FAULT_EXPORT InitResult init(const Config& config = {}) noexcept;
 
-/**
- * @brief Use this to immediately shutdown the application and perform similar actions as the
- * fault handlers, such as printing error message to stderr, displaying a fatal popup and write
- * report with metadata and object trace. On Linux, default abort is raised afterwards, whereas
- * on Windows, if set, a minidump is generated before terminating the process.
- *
- * @param message message to be displayed on report, stderr and popup
- *
- */
-[[noreturn]] inline void panic(std::string_view message = {}) noexcept {
-    panic_impl(message, nullptr);
-    FAULT_UNREACHABLE();
-}
+    /**
+     * @brief Saves a traced exception, which will later automatically be appended on panic or
+     * std::terminate handling.
+     * Example: Save a traced exception from a thread, signal main thread with shutdown request,
+     * main thread does cleanup and panics if exception is saved
+     *
+     * @note Thread-safe
+     * @note Not async-signal-safe (implied)
+     */
+    FAULT_EXPORT void save_traced_exception(std::string_view msg,
+                                            const ObjectTrace* customTrace = nullptr) noexcept;
 
-/**
- * @brief panics if any exception was saved via fault::save_traced_exception.
- * @note for higher customization, user may instead check fault::has_saved_traced_exception, and
- * if so explicitly panic with one of its overloads
- *
- */
-inline void panic_if_has_saved_exception(std::string_view message = {}) noexcept {
-    if (has_saved_traced_exception()) {
-        panic(message);
+    inline void save_traced_exception(std::string_view msg,
+                                      const std::optional<ObjectTrace>& customTrace) noexcept {
+        save_traced_exception(msg, customTrace.has_value() ? &*customTrace : nullptr);
+    }
+
+    /**
+     * @brief panic implementation
+     *
+     * @param message message to be displayed on report, stderr and popup
+     * @param customTrace Optional bject trace to be logged instead of default generated one.
+     */
+    [[noreturn]] FAULT_EXPORT void panic_impl(std::string_view message,
+                                              const ObjectTrace* customTrace = nullptr) noexcept;
+
+    /**
+     * @brief Use this to immediately shutdown the application and perform similar actions as the
+     * fault handlers, such as printing error message to stderr, displaying a fatal popup and write
+     * report with metadata and object trace. On Linux, default abort is raised afterwards, whereas
+     * on Windows, if set, a minidump is generated before terminating the process.
+     *
+     * @param message message to be displayed on report, stderr and popup
+     *
+     */
+    [[noreturn]] inline void panic(std::string_view message = {}) noexcept {
+        panic_impl(message, nullptr);
         FAULT_UNREACHABLE();
     }
-}
 
-/**
- * @brief panic version with trace override for report.
- *
- * @param trace Object trace to be logged instead of default generated one.
- * @param message message to be displayed on report, stderr and popup
- */
-[[noreturn]] inline void panic(const ObjectTrace& trace, std::string_view message = {}) noexcept {
-    panic_impl(message, &trace);
-    FAULT_UNREACHABLE();
-}
-
-/**
- * @brief panic version with an optional trace override for report.
- *
- * @param trace Object trace to be logged instead of default generated one.
- * @param message message to be displayed on report, stderr and popup
- */
-[[noreturn]] inline void panic(const std::optional<ObjectTrace>& trace,
-                               std::string_view message = {}) noexcept {
-    panic_impl(message, trace.has_value() ? &*trace : nullptr);
-    FAULT_UNREACHABLE();
-}
-
-/**
- * @brief Panic version using metadata information, for invariant failures with source location.
- *
- * @param expr expression string
- * @param loc source location (file, line, function name)
- * @param userMsg user provided message
- */
-[[noreturn]] FAULT_EXPORT void panic_at(std::string_view expr,
-                                        std::source_location loc = std::source_location::current(),
-                                        std::string_view userMsg = {}) noexcept;
-
-/**
- * @brief Panic version using metadata information, for invariant failures with source location.
- * Replaces string_view with a string_view callable, for deferred evaluation.
- *
- * @param expr expression string
- * @param loc source location (file, line, function name)
- * @param msgFn user message to be displayed & logged, as callable
- */
-template <typename MsgFn>
-    requires std::invocable<MsgFn> &&
-             std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
-[[noreturn]] void panic_at(
-    std::string_view expr, std::source_location loc = std::source_location::current(),
-    MsgFn&& msgFn = [] { return ""; }) noexcept {
-    if constexpr (requires { bool(msgFn); }) {
-        if (!msgFn) {
-            panic_at(expr, loc, "<null message provider>");
+    /**
+     * @brief panics if any exception was saved via fault::save_traced_exception.
+     * @note for higher customization, user may instead check fault::has_saved_traced_exception, and
+     * if so explicitly panic with one of its overloads
+     *
+     */
+    inline void panic_if_has_saved_exception(std::string_view message = {}) noexcept {
+        if (has_saved_traced_exception()) {
+            panic(message);
             FAULT_UNREACHABLE();
         }
     }
-    panic_at(expr, loc, std::invoke(std::forward<MsgFn>(msgFn)));
-    FAULT_UNREACHABLE();
-}
 
-/**
- * @brief Verify invariant. In case of failure, performs panic shutdown, writing object traced
- * report, visual popup and terminal summary, depending on panic settings. Available on all
- * build modes.
- *
- * @param cond condition to verify
- * @param userMsg user message to be displayed & logged
- */
-inline void verify(bool cond, std::string_view userMsg = {}) noexcept {
-    if (!cond) [[unlikely]] {
-        panic(userMsg);
+    /**
+     * @brief panic version with trace override for report.
+     *
+     * @param trace Object trace to be logged instead of default generated one.
+     * @param message message to be displayed on report, stderr and popup
+     */
+    [[noreturn]] inline void panic(const ObjectTrace& trace,
+                                   std::string_view message = {}) noexcept {
+        panic_impl(message, &trace);
         FAULT_UNREACHABLE();
     }
-}
 
-/**
- * @brief Verify invariant version with string_view callable, for deferred evaluation.
- *
- * @tparam MsgFn callable
- * @param cond condition to verify
- * @param msgFn user message to be displayed & logged, as callable
- */
-template <typename MsgFn>
-    requires std::invocable<MsgFn> &&
-             std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
-inline void verify(bool cond, MsgFn&& msgFn) noexcept {
-    if (!cond) [[unlikely]] {
+    /**
+     * @brief panic version with an optional trace override for report.
+     *
+     * @param trace Object trace to be logged instead of default generated one.
+     * @param message message to be displayed on report, stderr and popup
+     */
+    [[noreturn]] inline void panic(const std::optional<ObjectTrace>& trace,
+                                   std::string_view message = {}) noexcept {
+        panic_impl(message, trace.has_value() ? &*trace : nullptr);
+        FAULT_UNREACHABLE();
+    }
+
+    /**
+     * @brief Panic version using metadata information, for invariant failures with source location.
+     *
+     * @param expr expression string
+     * @param loc source location (file, line, function name)
+     * @param userMsg user provided message
+     */
+    [[noreturn]] FAULT_EXPORT void panic_at(
+        std::string_view expr, std::source_location loc = std::source_location::current(),
+        std::string_view userMsg = {}) noexcept;
+
+    /**
+     * @brief Panic version using metadata information, for invariant failures with source location.
+     * Replaces string_view with a string_view callable, for deferred evaluation.
+     *
+     * @param expr expression string
+     * @param loc source location (file, line, function name)
+     * @param msgFn user message to be displayed & logged, as callable
+     */
+    template <typename MsgFn>
+        requires std::invocable<MsgFn> &&
+                 std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
+    [[noreturn]] void panic_at(
+        std::string_view expr, std::source_location loc = std::source_location::current(),
+        MsgFn&& msgFn = [] { return ""; }) noexcept {
         if constexpr (requires { bool(msgFn); }) {
             if (!msgFn) {
-                panic("<null message provider>");
+                panic_at(expr, loc, "<null message provider>");
                 FAULT_UNREACHABLE();
             }
         }
-        panic(std::invoke(std::forward<MsgFn>(msgFn)));
+        panic_at(expr, loc, std::invoke(std::forward<MsgFn>(msgFn)));
         FAULT_UNREACHABLE();
     }
-}
 
-/**
- * @brief Similar to verify(), but with location metadata
- *
- * @param cond condition to verify
- * @param userMsg user message to be displayed & logged
- * @param loc location metadata to be displayed & logged
- */
-inline void expect_at(bool cond, std::string_view userMsg = {},
-                      std::source_location loc = std::source_location::current()) noexcept {
-    if (!cond) [[unlikely]] {
-        panic_at("", loc, userMsg);
-        FAULT_UNREACHABLE();
-    }
-}
-
-/**
- * @brief expect_at version with string_view callable, for deferred evaluation
- *
- * @tparam MsgFn
- * @param cond condition to verify
- * @param msgFn user message to be displayed & logged, as callable
- * @param loc location metadata to be displayed & logged
- */
-template <typename MsgFn>
-    requires std::invocable<MsgFn> &&
-             std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
-inline void expect_at(bool cond, MsgFn&& msgFn,
-                      std::source_location loc = std::source_location::current()) noexcept {
-    if (!cond) [[unlikely]] {
-        if constexpr (requires { bool(msgFn); }) {
-            if (!msgFn) {
-                panic_at("", loc, "<null message provider>");
-                FAULT_UNREACHABLE();
-            }
+    /**
+     * @brief Verify invariant. In case of failure, performs panic shutdown, writing object traced
+     * report, visual popup and terminal summary, depending on panic settings. Available on all
+     * build modes.
+     *
+     * @param cond condition to verify
+     * @param userMsg user message to be displayed & logged
+     */
+    inline void verify(bool cond, std::string_view userMsg = {}) noexcept {
+        if (!cond) [[unlikely]] {
+            panic(userMsg);
+            FAULT_UNREACHABLE();
         }
-        panic_at("", loc, std::invoke(std::forward<MsgFn>(msgFn)));
-        FAULT_UNREACHABLE();
     }
-}
 
-/**
- * @brief Similar to verify(), but with location metadata when FAULT_USE_LOCATIONS is defined
- * (default on debug builds)
- *
- * @param cond condition to verify
- * @param userMsg user message to be displayed & logged
- * @param loc location metadata to be displayed & logged
- */
-inline void expect(bool cond, std::string_view userMsg = {}
+    /**
+     * @brief Verify invariant version with string_view callable, for deferred evaluation.
+     *
+     * @tparam MsgFn callable
+     * @param cond condition to verify
+     * @param msgFn user message to be displayed & logged, as callable
+     */
+    template <typename MsgFn>
+        requires std::invocable<MsgFn> &&
+                 std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
+    inline void verify(bool cond, MsgFn&& msgFn) noexcept {
+        if (!cond) [[unlikely]] {
+            if constexpr (requires { bool(msgFn); }) {
+                if (!msgFn) {
+                    panic("<null message provider>");
+                    FAULT_UNREACHABLE();
+                }
+            }
+            panic(std::invoke(std::forward<MsgFn>(msgFn)));
+            FAULT_UNREACHABLE();
+        }
+    }
+
+    /**
+     * @brief Similar to verify(), but with location metadata
+     *
+     * @param cond condition to verify
+     * @param userMsg user message to be displayed & logged
+     * @param loc location metadata to be displayed & logged
+     */
+    inline void expect_at(bool cond, std::string_view userMsg = {},
+                          std::source_location loc = std::source_location::current()) noexcept {
+        if (!cond) [[unlikely]] {
+            panic_at("", loc, userMsg);
+            FAULT_UNREACHABLE();
+        }
+    }
+
+    /**
+     * @brief expect_at version with string_view callable, for deferred evaluation
+     *
+     * @tparam MsgFn
+     * @param cond condition to verify
+     * @param msgFn user message to be displayed & logged, as callable
+     * @param loc location metadata to be displayed & logged
+     */
+    template <typename MsgFn>
+        requires std::invocable<MsgFn> &&
+                 std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
+    inline void expect_at(bool cond, MsgFn&& msgFn,
+                          std::source_location loc = std::source_location::current()) noexcept {
+        if (!cond) [[unlikely]] {
+            if constexpr (requires { bool(msgFn); }) {
+                if (!msgFn) {
+                    panic_at("", loc, "<null message provider>");
+                    FAULT_UNREACHABLE();
+                }
+            }
+            panic_at("", loc, std::invoke(std::forward<MsgFn>(msgFn)));
+            FAULT_UNREACHABLE();
+        }
+    }
+
+    /**
+     * @brief Similar to verify(), but with location metadata when FAULT_USE_LOCATIONS is defined
+     * (default on debug builds)
+     *
+     * @param cond condition to verify
+     * @param userMsg user message to be displayed & logged
+     * @param loc location metadata to be displayed & logged
+     */
+    inline void expect(bool cond, std::string_view userMsg = {}
 #if FAULT_USE_LOCATIONS
-                   ,
-                   std::source_location loc = std::source_location::current()
+                       ,
+                       std::source_location loc = std::source_location::current()
 #endif
-                       ) noexcept {
-    if (!cond) [[unlikely]] {
+                           ) noexcept {
+        if (!cond) [[unlikely]] {
 #if FAULT_USE_LOCATIONS
-        expect_at(false, userMsg, loc);
+            expect_at(false, userMsg, loc);
 #else
-        verify(false, userMsg);
+            verify(false, userMsg);
 #endif
+        }
     }
-}
 
-/**
- * @brief expect version with string_view callable, for deferred evaluation
- *
- * @param cond condition to verify
- * @param msgFn user message to be displayed & logged, as callable
- * @param loc location metadata to be displayed & logged
- */
-template <typename MsgFn>
-    requires std::invocable<MsgFn> &&
-             std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
-inline void expect(bool cond, MsgFn&& msgFn
+    /**
+     * @brief expect version with string_view callable, for deferred evaluation
+     *
+     * @param cond condition to verify
+     * @param msgFn user message to be displayed & logged, as callable
+     * @param loc location metadata to be displayed & logged
+     */
+    template <typename MsgFn>
+        requires std::invocable<MsgFn> &&
+                 std::convertible_to<std::invoke_result_t<MsgFn>, std::string_view>
+    inline void expect(bool cond, MsgFn&& msgFn
 #if FAULT_USE_LOCATIONS
-                   ,
-                   std::source_location loc = std::source_location::current()
+                       ,
+                       std::source_location loc = std::source_location::current()
 #endif
-                       ) noexcept {
-    if (!cond) [[unlikely]] {
+                           ) noexcept {
+        if (!cond) [[unlikely]] {
 #if FAULT_USE_LOCATIONS
-        expect_at(false, std::forward<MsgFn>(msgFn), loc);
+            expect_at(false, std::forward<MsgFn>(msgFn), loc);
 #else
-        verify(false, std::forward<MsgFn>(msgFn));
+            verify(false, std::forward<MsgFn>(msgFn));
 #endif
+        }
     }
-}
 
-enum class CatchPolicy : std::uint8_t { kNothing, kPanic, kSaveExceptionWithShutdownRequest };
+    enum class CatchPolicy : std::uint8_t { kNothing, kPanic, kSaveExceptionWithShutdownRequest };
 
-/**
- * @brief Wraps and invokes body within a try/catch with default catch blocks: 'const
- * std::exception&' and 'catch all'. If any of these blocks is reached, executes onException, if
- * any, followed by a given policy: panic (@see fault::panic) - in which case it is [[noreturn]]; or
- * saves exception and signals for shutdown (@see fault::has_shutdown_request), returning
- * afterwards; or does nothing and returns.
- *
- * The try/catch block uses cpptrace unwind interceptor, meaning that either policy will
- * automatically contain traces from the current exception (i.e containing the thrown context)
- *
- * @note onException callback contains the exception pointer, which users may use to retrieve
- * suspected exception types, similarly to if they had done the original try/catch themselves. It
- * returns a std::string, which, if non-empty, will be forwarded to fault::panic or to the saved
- * trace message, depending on the policy. If empty, it uses default no-op or std::exception
- * message, whichever block was hit.
- * @note Use this when you want to have traces from exceptions without depending on cpptrace
- * directly.
- *
- * @param body Function to be invocked
- * @param catchPolicy policy to execute on catch event
- * @param onException optional callback to execute on catch event, before the policy is executed. If
- * the return value is non-empty, it is used as panic or saved exception message.
- */
-FAULT_EXPORT void try_catch(
-    std::function<void()> body, CatchPolicy catchPolicy,
-    std::function<std::string(std::exception_ptr ep, const ObjectTrace& trace)> onException =
-        nullptr) noexcept;
+    /**
+     * @brief Wraps and invokes body within a try/catch with default catch blocks: 'const
+     * std::exception&' and 'catch all'. If any of these blocks is reached, executes onException, if
+     * any, followed by a given policy: panic (@see fault::panic) - in which case it is
+     * [[noreturn]]; or saves exception and signals for shutdown (@see fault::has_shutdown_request),
+     * returning afterwards; or does nothing and returns.
+     *
+     * The try/catch block uses cpptrace unwind interceptor, meaning that either policy will
+     * automatically contain traces from the current exception (i.e containing the thrown context)
+     *
+     * @note onException callback contains the exception pointer, which users may use to retrieve
+     * suspected exception types, similarly to if they had done the original try/catch themselves.
+     * It returns a std::string, which, if non-empty, will be forwarded to fault::panic or to the
+     * saved trace message, depending on the policy. If empty, it uses default no-op or
+     * std::exception message, whichever block was hit.
+     * @note Use this when you want to have traces from exceptions without depending on cpptrace
+     * directly.
+     *
+     * @param body Function to be invocked
+     * @param catchPolicy policy to execute on catch event
+     * @param onException optional callback to execute on catch event, before the policy is
+     * executed. If the return value is non-empty, it is used as panic or saved exception message.
+     */
+    FAULT_EXPORT void try_catch(
+        std::function<void()> body, CatchPolicy catchPolicy,
+        std::function<std::string(std::exception_ptr ep, const ObjectTrace& trace)> onException =
+            nullptr) noexcept;
 
-/**
- * @brief Stores shutdown request
- *
- * @return returning wether this is the first request made.
- */
-FAULT_EXPORT bool set_shutdown_request() noexcept;
+    /**
+     * @brief Stores shutdown request
+     *
+     * @return returning wether this is the first request made.
+     */
+    FAULT_EXPORT bool set_shutdown_request() noexcept;
 
-/**
- * @brief Returns wether any shutdown request has been made.
- *
- */
-FAULT_NODISCARD FAULT_EXPORT bool has_shutdown_request() noexcept;
+    /**
+     * @brief Returns wether any shutdown request has been made.
+     *
+     */
+    FAULT_NODISCARD FAULT_EXPORT bool has_shutdown_request() noexcept;
 
-/**
- * @brief Returns wether a signal safe object trace can be collected. If false and option to
- * collect regular trace is not selected, then no trace will be attempted on signal handlers or
- * Windows exception handlers
- *
- */
-FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
+    /**
+     * @brief Returns wether a signal safe object trace can be collected. If false and option to
+     * collect regular trace is not selected, then no trace will be attempted on signal handlers or
+     * Windows exception handlers
+     *
+     */
+    FAULT_NODISCARD FAULT_EXPORT bool can_collect_safe_trace() noexcept;
 
 }  // namespace v1
 
