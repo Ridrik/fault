@@ -134,6 +134,10 @@ struct InlineString {
 
     [[nodiscard]] InlineStringSpan span() noexcept;
 
+    operator std::string_view() const noexcept {
+        return std::string_view{data_.data(), size_};
+    }
+
     void setSize(std::size_t newSize) noexcept {
         if (newSize >= size_) {
             return;
@@ -276,6 +280,14 @@ struct InlineStringSpan {
         return data_.data();
     }
 
+    [[nodiscard]] constexpr auto empty() const noexcept {
+        return getSize() == 0;
+    }
+
+    operator std::string_view() const noexcept {
+        return std::string_view{data_.data(), size_};
+    }
+
     void setSize(std::size_t newSize) noexcept {
         if (newSize >= size_) {
             return;
@@ -404,86 +416,6 @@ inline std::string_view getSafeView(const char* ptr) noexcept {
     }
     return std::string_view{ptr};
 }
-
-/*constexpr void safeAppend(char* buffer, std::size_t& offset, std::size_t capacity,
-                          const char* str) noexcept {
-    if (str == nullptr) {
-        return;
-    }
-    while (*str != '\0' && offset < capacity - 1) {
-        buffer[offset++] = *str++;
-    }
-    buffer[offset] = '\0';
-}
-
-template <typename... Args>
-constexpr void safeAppendFmt(char* buffer, std::size_t& offset, std::size_t capacity,
-                             std::format_string<Args...> fmt, Args&&... args) noexcept {
-    if (offset >= capacity - 1) {
-        return;
-    }
-    const auto r =
-        std::format_to_n(buffer + offset, capacity - offset - 1, fmt, std::forward<Args>(args)...);
-    offset += r.size;
-    buffer[offset] = '\0';
-}
-
-constexpr void safeAppend(char* buffer, std::size_t& offset, std::size_t capacity, const char* str,
-                          std::size_t length) noexcept {
-    if (str == nullptr) {
-        return;
-    }
-    std::size_t appended{0};
-    while (appended++ < length && offset < capacity - 1) {
-        buffer[offset++] = *str++;
-    }
-    buffer[offset] = '\0';
-}
-
-constexpr void safeAppend(char* buffer, std::size_t& offset, std::size_t capacity,
-                          std::uintptr_t value) noexcept {
-    std::array<char, 19> buf{};
-    safeWriteHex(value, buf);
-    safeAppend(buffer, offset, capacity, buf.data(), 18);
-}
-
-constexpr void itoaSafeAppend(char* buffer, std::size_t& offset, std::size_t capacity,
-                              std::uint64_t value) noexcept {
-    if (offset >= capacity - 1) {
-        return;
-    }
-    if (value == 0) {
-        buffer[offset++] = '0';
-        buffer[offset] = '\0';
-        return;
-    }
-    std::size_t len{0};
-    for (std::uint64_t temp = value; temp > 0; temp /= 10) {
-        len++;
-    }
-    if (offset + len >= capacity - 1) {
-        return;
-    }
-    for (std::size_t i = len; i > 0; --i) {
-        buffer[offset + i - 1] = static_cast<char>(value % 10 + '0');
-        value /= 10;
-    }
-    offset += len;
-    buffer[offset] = '\0';
-}
-
-constexpr void safeAppend(char* buffer, std::size_t& offset, std::size_t capacity,
-                          const std::source_location& loc) {
-    safeAppend(buffer, offset, capacity, " @ ");
-    safeAppend(buffer, offset, capacity, loc.file_name());
-    safeAppend(buffer, offset, capacity, ":");
-    itoaSafeAppend(buffer, offset, capacity, loc.line());
-    if (loc.function_name() != nullptr) {
-        safeAppend(buffer, offset, capacity, " (");
-        safeAppend(buffer, offset, capacity, loc.function_name());
-        safeAppend(buffer, offset, capacity, ")");
-    }
-}*/
 
 void fmt2d(char* buf, std::uint32_t val) noexcept {
     buf[0] = static_cast<char>((val / 10) + '0');
@@ -1468,11 +1400,9 @@ struct WindowsHandling {
                               const std::optional<cpptrace::object_trace>& customTrace,
                               bool resolveTrace) noexcept {
         const auto written =
-            writeReport
-                ? ExitHandler::writeReport(std::string_view{WindowsHandling::finalBuffer.getData(),
-                                                            WindowsHandling::finalBuffer.getSize()},
-                                           customTrace, resolveTrace)
-                : false;
+            writeReport ? ExitHandler::writeReport(std::string_view{WindowsHandling::finalBuffer},
+                                                   customTrace, resolveTrace)
+                        : false;
         if (printToStderr) {
             utils::InlineString<2048> stdErrBfr{};
             stdErrBfr.appendMulti("\n--- FAULT REPORT v", version::kString, " ---\n");
@@ -1488,7 +1418,7 @@ struct WindowsHandling {
                                       _internal::Config::Windows::dumpPath.data());
             }
             stdErrBfr.append("\n--- FAULT END ---\n");
-            ExitHandler::writeToStdErr(std::string_view{stdErrBfr.getData(), stdErrBfr.getSize()});
+            ExitHandler::writeToStdErr(std::string_view{stdErrBfr});
         }
         WindowsHandling::reportDone = true;
     }
@@ -1502,17 +1432,6 @@ struct WindowsHandling {
         WindowsHandling::finalBuffer.appendFmt(
             "{}\n\nDescription: {}\n", std::string_view{_internal::config.baseErrorMessage.data()},
             std::string_view{filteredMsg.data(), filteredMsg.size()});
-        /*if (!SUCCEEDED(::StringCchPrintfExA(WindowsHandling::finalBuffer.getData(),
-                                            WindowsHandling::finalBuffer.getSize(), &pszDestEnd,
-                                            &remaining, 0, "%s\n\nDescription: %s\n",
-                                            _internal::config.baseErrorMessage.data(),
-                                            filteredMsg.data(), filteredMsg.size()))) {
-            WindowsHandling::finalBuffer.appendMulti(_internal::config.baseErrorMessage.data(),
-                                                     '\n');
-        } else {
-            WindowsHandling::finalBuffer.setSize(pszDestEnd -
-                                                 WindowsHandling::finalBuffer.getData());
-        }*/
         if ((pExc != nullptr) && (pExc->ExceptionRecord != nullptr)) {
             const ::EXCEPTION_RECORD& rec = *pExc->ExceptionRecord;
             WindowsHandling::finalBuffer.appendMulti(
@@ -1931,11 +1850,9 @@ struct LinuxHandling {
         const std::optional<cpptrace::object_trace>& customTrace = std::nullopt,
         bool resolveTrace = false) noexcept {
         const auto written =
-            writeReport
-                ? ExitHandler::writeReport(std::string_view{LinuxHandling::finalBuffer.getData(),
-                                                            LinuxHandling::finalBuffer.getSize()},
-                                           customTrace, resolveTrace)
-                : false;
+            writeReport ? ExitHandler::writeReport(std::string_view{LinuxHandling::finalBuffer},
+                                                   customTrace, resolveTrace)
+                        : false;
         if (printToStderr) {
             utils::InlineString<2048> stdErrBfr{};
             stdErrBfr.appendMulti("\n--- FAULT REPORT v", version::kString, " ---\n");
@@ -1947,7 +1864,7 @@ struct LinuxHandling {
                 stdErrBfr.append("\nCould not generate report.\n");
             }
             stdErrBfr.append("\n--- FAULT END ---\n");
-            ExitHandler::writeToStdErr(std::string_view{stdErrBfr.getData(), stdErrBfr.getSize()});
+            ExitHandler::writeToStdErr(std::string_view{stdErrBfr});
         }
         ExitHandler::shutdown();
         FAULT_UNREACHABLE();
@@ -2162,8 +2079,7 @@ struct TerminateHandling {
 #endif
             v1::ObjectTrace faultTrace =
                 adapter::v1::from_cpptrace(trace).value_or(v1::ObjectTrace{});
-            TerminateHandling::terminateHook(std::string_view{msg.getData(), msg.getSize()},
-                                             faultTrace);
+            TerminateHandling::terminateHook(std::string_view{msg}, faultTrace);
             trace = adapter::v1::to_cpptrace(faultTrace).value_or(cpptrace::object_trace{});
 #if FAULT_EXCEPTIONS
         } catch (...) {
@@ -2340,10 +2256,8 @@ struct TerminateHandling {
             ExitHandler::parkThreadForever();
             FAULT_UNREACHABLE();
         }
-        TerminateHandling::controlledShutdown(
-            std::string_view{userMsg.getData(), userMsg.getSize()},
-            std::string_view{details.getData(), details.getSize()}, settings,
-            std::move(cppObjTrace));
+        TerminateHandling::controlledShutdown(std::string_view{userMsg}, std::string_view{details},
+                                              settings, std::move(cppObjTrace));
     }
 
     static void setup() noexcept {
