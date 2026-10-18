@@ -157,12 +157,13 @@ struct InlineString {
         data_[size_] = '\0';
     }
 
-    constexpr void append(const char* str) noexcept {
-        if (str == nullptr) {
-            return;
-        }
-        while (*str != '\0' && size_ < N - 1) {
-            data_[size_++] = *str++;
+    template <std::size_t N_Other>
+    constexpr void append(const char (&str)[N_Other]) noexcept {  // NOLINT
+        for (std::size_t i{0}; i < N_Other - 1; ++i) {
+            if (size_ >= getCapacity() - 1) {
+                break;
+            }
+            data_[size_++] = str[i];
         }
         data_[size_] = '\0';
     }
@@ -194,17 +195,6 @@ struct InlineString {
 
     constexpr void append(std::string_view str) noexcept {
         append(std::span<const char>{str});
-    }
-
-    template <std::size_t N_Other>
-    constexpr void append(const char (&str)[N_Other]) noexcept {  // NOLINT
-        for (const auto c : str) {
-            if (size_ < N - 1) {
-                break;
-            }
-            data_[size_++] = c;
-        }
-        data_[size_] = '\0';
     }
 
     template <std::size_t N_Other>
@@ -305,21 +295,11 @@ struct InlineStringSpan {
 
     template <std::size_t N_Other>
     constexpr void append(const char (&str)[N_Other]) noexcept {  // NOLINT
-        for (const auto c : str) {
-            if (size_ < getCapacity() - 1) {
+        for (std::size_t i{0}; i < N_Other - 1; ++i) {
+            if (size_ >= getCapacity() - 1) {
                 break;
             }
-            data_[size_++] = c;
-        }
-        data_[size_] = '\0';
-    }
-
-    constexpr void append(const char* str) noexcept {
-        if (str == nullptr) {
-            return;
-        }
-        while (*str != '\0' && size_ < getCapacity() - 1) {
-            data_[size_++] = *str++;
+            data_[size_++] = str[i];
         }
         data_[size_] = '\0';
     }
@@ -347,6 +327,10 @@ struct InlineStringSpan {
             data_[size_++] = c;
         }
         data_[size_] = '\0';
+    }
+
+    constexpr void append(std::string_view str) noexcept {
+        append(std::span<const char>{str});
     }
 
     constexpr void append(const InlineStringSpan& str) noexcept {
@@ -531,8 +515,7 @@ void writePreciseTimeSafe(InlineStringSpan str, const char* initDateStr,
             str.append('\n');
         }
     }
-    str.appendMulti("Fault Time: ", std::span{tempBuf.data(), tempBuf.size()},
-                    " UTC\nUnix Epoch: ");
+    str.appendMulti("Fault Time: ", std::span{tempBuf}, " UTC\nUnix Epoch: ");
     str.itoaAppend(tvSec);
     if (!initWritten) {
         str.append('\n');
@@ -551,7 +534,7 @@ void writePreciseTimeSafe(InlineStringSpan str, const char* initDateStr,
     msBuf[2] = static_cast<char>((uptimeMilliSec % 10) + '0');
     str.append("\nUptime: ");
     str.itoaAppend(uptimeSec);
-    str.appendMulti('.', std::span{msBuf.data(), msBuf.size()}, " sec\n");
+    str.appendMulti('.', std::span{msBuf}, " sec\n");
 }
 
 void safePrint(const cpptrace::safe_object_frame& frame,
@@ -795,7 +778,7 @@ void invokeAndSaveUnwind(const PanicHook& f,
         if (const auto str = f(); str.empty()) {
             unWindStorage.buffer.append("<No message provided>");
         } else {
-            unWindStorage.buffer.append(std::span{str.c_str(), str.size()});
+            unWindStorage.buffer.append(std::string_view{str});
         }
 #if FAULT_EXCEPTIONS
     } catch (...) {
@@ -1254,7 +1237,7 @@ void safeAppendVEHInfo(struct ::_EXCEPTION_POINTERS* pExc, utils::InlineStringSp
                                        std::array<char, 19>& buff) {
         str.append(name);
         utils::safeWriteHex(static_cast<std::uintptr_t>(val), buff);
-        str.append(std::span{buff});
+        str.append(std::span{buff.data(), 18});
     };
 
     kAddReg("\nRIP=", ctx.Rip, str, regBuff);
@@ -1270,7 +1253,7 @@ void safeAppendVEHInfo(struct ::_EXCEPTION_POINTERS* pExc, utils::InlineStringSp
     // Flags and Error Context
     str.append("\nEFLAGS=");
     utils::safeWriteHex(static_cast<std::uintptr_t>(ctx.EFlags), regBuff);
-    str.appendMulti(std::span{regBuff}, '\n');
+    str.appendMulti(std::span{regBuff, 18}, '\n');
 }
 
 const char* getExceptionString(::DWORD code) noexcept {
@@ -1371,8 +1354,8 @@ struct WindowsHandling {
         std::array<wchar_t, _internal::Config::Windows::dumpPath.size()> dumpPathW{};
         const ::HANDLE hFile = utils::utf8ToUtf16Stack(_internal::Config::Windows::dumpPath.data(),
                                                        dumpPathW.data(), dumpPathW.size())
-                                   ? CreateFileW(dumpPathW.data(), GENERIC_WRITE, 0, nullptr,
-                                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr)
+                                   ? ::CreateFileW(dumpPathW.data(), GENERIC_WRITE, 0, nullptr,
+                                                   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr)
                                    : INVALID_HANDLE_VALUE;
         if (hFile == INVALID_HANDLE_VALUE) {
             return false;
@@ -1449,8 +1432,7 @@ struct WindowsHandling {
                                     _internal::gInitTime.tvNsec, _internal::gInitTime.written);
         WindowsHandling::offsetForMsg = WindowsHandling::finalBuffer.getSize();
         if (!details.empty()) {
-            WindowsHandling::finalBuffer.appendMulti("\nTechnical comments:\n",
-                                                     std::span{details.data(), details.size()});
+            WindowsHandling::finalBuffer.appendMulti("\nTechnical comments:\n", details);
         }
         safeAppendVEHInfo(pExc, WindowsHandling::finalBuffer.span());
     }
@@ -1636,28 +1618,28 @@ void safeAppendRegisters(const ::ucontext_t* ctx, utils::InlineStringSpan str) n
     utils::safeWriteHex(g[REG_RIP], regBuff);
 
     // 1. Instruction and Stack Pointers (The "Big Three")
-    str.appendMulti("\nRegisters:\nRIP=", regBuff.data());
+    str.appendMulti("\nRegisters:\nRIP=", std::span{regBuff.data(), 18});
 
     utils::safeWriteHex(g[REG_RSP], regBuff);
-    str.appendMulti(" RSP=", regBuff.data());
+    str.appendMulti(" RSP=", std::span{regBuff.data(), 18});
     utils::safeWriteHex(g[REG_RBP], regBuff);
-    str.appendMulti(" RBP=", regBuff.data());
+    str.appendMulti(" RBP=", std::span{regBuff.data(), 18});
 
     // 2. Common General Purpose Registers (Helpful for finding null pointers/args)
     utils::safeWriteHex(g[REG_RAX], regBuff);
-    str.appendMulti("\nRAX=", regBuff.data());
+    str.appendMulti("\nRAX=", std::span{regBuff.data(), 18});
     utils::safeWriteHex(g[REG_RBX], regBuff);
-    str.appendMulti(" RBX=", regBuff.data());
+    str.appendMulti(" RBX=", std::span{regBuff.data(), 18});
     utils::safeWriteHex(g[REG_RCX], regBuff);
-    str.appendMulti(" RCX=", regBuff.data());
+    str.appendMulti(" RCX=", std::span{regBuff.data(), 18});
     utils::safeWriteHex(g[REG_RDX], regBuff);
-    str.appendMulti(" RDX=", regBuff.data());
+    str.appendMulti(" RDX=", std::span{regBuff.data(), 18});
 
     // 3. Argument Registers (RDI/RSI often contain the pointers being processed)
     utils::safeWriteHex(g[REG_RDI], regBuff);
-    str.appendMulti("\nRDI=", regBuff.data());
+    str.appendMulti("\nRDI=", std::span{regBuff.data(), 18});
     utils::safeWriteHex(g[REG_RSI], regBuff);
-    str.appendMulti(" RSI=", regBuff.data());
+    str.appendMulti(" RSI=", std::span{regBuff.data(), 18});
 
     // 4. Hardware Error Code (Very useful for SEGV analysis)
     utils::safeWriteHex(g[REG_ERR], regBuff);
@@ -1792,22 +1774,17 @@ struct LinuxHandling {
         LinuxHandling::finalBuffer.appendMulti(_internal::config.baseErrorMessage.data(),
                                                "\n\nDescription: ");
         const auto filteredMsg = description.empty() ? "<no message>" : description;
-        LinuxHandling::finalBuffer.appendMulti(std::span{filteredMsg.data(), filteredMsg.size()},
-                                               "\n\n");
+        LinuxHandling::finalBuffer.appendMulti(filteredMsg, "\n\n");
         utils::writePreciseTimeSafe(LinuxHandling::finalBuffer.span(),
                                     _internal::gInitTime.str.data(), _internal::gInitTime.tvSec,
                                     _internal::gInitTime.tvNsec, _internal::gInitTime.written);
     }
 
-    static void writeSummaryMessageToBuffer(int sig, const ::siginfo_t* info) noexcept {
-        {
-            std::size_t titleOffset{0};
-            LinuxHandling::titleBuffer.appendMulti(_internal::config.appName.data(),
-                                                   " Fatal Error");
-        }
+    static void writeSummaryMessageToBuffer(const ::siginfo_t* info) noexcept {
+        LinuxHandling::titleBuffer.appendMulti(_internal::config.appName.data(), " Fatal Error");
         LinuxHandling::finalBuffer.appendMulti(_internal::config.baseErrorMessage.data(),
                                                "\n\nSignal Event: ");
-        switch (sig) {
+        switch (LinuxHandling::signal) {
             case SIGSEGV:
                 LinuxHandling::finalBuffer.append("SIGSEGV");
                 break;
@@ -1830,11 +1807,12 @@ struct LinuxHandling {
         }
         LinuxHandling::finalBuffer.append('\n');
         if (info != nullptr) {
-            LinuxHandling::finalBuffer.appendMulti("Reason: ", safePrintSiCode(sig, info->si_code),
-                                                   "\nFault address: ");
+            LinuxHandling::finalBuffer.appendMulti(
+                "Reason: ", safePrintSiCode(LinuxHandling::signal, info->si_code),
+                "\nFault address: ");
             std::array<char, 19> addrBuff{};
             utils::safeWriteHex(reinterpret_cast<std::uintptr_t>(info->si_addr), addrBuff);
-            LinuxHandling::finalBuffer.appendMulti(addrBuff.data(), "\n\n");
+            LinuxHandling::finalBuffer.appendMulti(std::span{addrBuff.data(), 18}, "\n\n");
         }
         utils::writePreciseTimeSafe(LinuxHandling::finalBuffer.span(),
                                     _internal::gInitTime.str.data(), _internal::gInitTime.tvSec,
@@ -1897,7 +1875,7 @@ struct LinuxHandling {
         LinuxHandling::signal = sig;
         LinuxHandling::showPopUp = _internal::config.showPopUp;
         LinuxHandling::shouldReRaiseSignal = _internal::config.signal.raiseDefaultAfterwards;
-        LinuxHandling::writeSummaryMessageToBuffer(LinuxHandling::signal, info);
+        LinuxHandling::writeSummaryMessageToBuffer(info);
         LinuxHandling::offsetForMsg = LinuxHandling::finalBuffer.getSize();
         LinuxHandling::writeReportDetailsToBuffer(static_cast<const ::ucontext_t*>(uctx));
         constexpr bool kResolveTrace{false};
@@ -1942,8 +1920,8 @@ struct LinuxHandling {
 
     [[noreturn]] static void fromTerminate(std::string_view msg, std::string_view details, int code,
                                            bool printToStderr, bool writeReport,
-                                           cpptrace::object_trace&& customTrace, bool showPopUp,
-                                           bool resolveTrace) noexcept {
+                                           const std::optional<cpptrace::object_trace>& customTrace,
+                                           bool showPopUp, bool resolveTrace) noexcept {
         LinuxHandling::checkPermissions();
         LinuxHandling::signal = code;
         LinuxHandling::showPopUp = showPopUp;
@@ -1951,11 +1929,9 @@ struct LinuxHandling {
         LinuxHandling::writeSummaryMessageToBuffer(msg);
         LinuxHandling::offsetForMsg = LinuxHandling::finalBuffer.getSize();
         if (!details.empty()) {
-            LinuxHandling::finalBuffer.appendMulti("\nTechnical comments: ",
-                                                   std::span{details.data(), details.size()});
+            LinuxHandling::finalBuffer.appendMulti("\nTechnical comments: ", details);
         }
-        LinuxHandling::commonActions(printToStderr, writeReport,
-                                     std::optional(std::move(customTrace)), resolveTrace);
+        LinuxHandling::commonActions(printToStderr, writeReport, customTrace, resolveTrace);
         FAULT_UNREACHABLE();
     }
 
@@ -2198,8 +2174,8 @@ struct TerminateHandling {
 #ifdef __linux__
         constexpr int kTerminateCode{SIGABRT};
         LinuxHandling::fromTerminate(message, details, kTerminateCode, settings.printToStdErr,
-                                     settings.writeReport, std::move(customTrace),
-                                     settings.showPopUp, _internal::config.resolveNonSignalTrace);
+                                     settings.writeReport, customTrace, settings.showPopUp,
+                                     _internal::config.resolveNonSignalTrace);
 #else
         constexpr int kTerminateCode{3};
         WindowsHandling::fromTerminate(message, details, kTerminateCode, settings.printToStdErr,
@@ -2245,7 +2221,7 @@ struct TerminateHandling {
         if (startMsg.has_value()) {
             const auto& startMsgVal = *startMsg;
             if (!startMsgVal.empty()) {
-                userMsg.append(std::span{startMsgVal.data(), startMsgVal.size()});
+                userMsg.append(startMsgVal);
             } else {
                 userMsg.append("<no message>");
             }
