@@ -100,14 +100,17 @@ static_assert(std::atomic<int>::is_always_lock_free,
 
 constexpr const char* const kHexChars = "0123456789abcdef";
 
-constexpr void safeWriteHex(std::uintptr_t value, std::array<char, 19>& buf) noexcept {
+constexpr void safeWriteHex(std::uintptr_t value, std::array<char, 18>& buf) noexcept {
     buf[0] = '0';
     buf[1] = 'x';
     for (int i{0}; i < 16; ++i) {
         buf[17 - i] = kHexChars[(value >> (i * 4)) & 0xF];
     }
-    buf[18] = '\0';
 }
+
+struct Itoa {
+    std::uint64_t val{};
+};
 
 struct InlineStringSpan;
 
@@ -203,12 +206,13 @@ struct InlineString {
     }
 
     constexpr void append(std::uintptr_t value) noexcept {
-        std::array<char, 19> buf{};
+        std::array<char, 18> buf{};
         safeWriteHex(value, buf);
-        append(std::span{buf.data(), 18});
+        append(std::span{buf});
     }
 
-    constexpr void itoaAppend(std::uint64_t value) noexcept {
+    constexpr void append(Itoa val) noexcept {
+        auto& value = val.val;
         if (size_ >= N - 1) {
             return;
         }
@@ -233,8 +237,7 @@ struct InlineString {
     }
 
     constexpr void append(const std::source_location& loc) {
-        appendMulti(" @ ", loc.file_name(), ':');
-        itoaAppend(static_cast<std::uint64_t>(loc.line()));
+        appendMulti(" @ ", loc.file_name(), ':', Itoa{static_cast<std::uint64_t>(loc.line())});
         if (loc.function_name() != nullptr) {
             appendMulti(" (", loc.function_name(), ')');
         }
@@ -338,12 +341,13 @@ struct InlineStringSpan {
     }
 
     constexpr void append(std::uintptr_t value) noexcept {
-        std::array<char, 19> buf{};
+        std::array<char, 18> buf{};
         safeWriteHex(value, buf);
-        append(std::span{buf.data(), 18});
+        append(std::span{buf});
     }
 
-    constexpr void itoaAppend(std::uint64_t value) noexcept {
+    constexpr void append(Itoa val) noexcept {
+        auto& value = val.val;
         if (size_ >= getCapacity() - 1) {
             return;
         }
@@ -368,8 +372,7 @@ struct InlineStringSpan {
     }
 
     constexpr void append(const std::source_location& loc) {
-        appendMulti(" @ ", loc.file_name(), ':');
-        itoaAppend(static_cast<std::uint64_t>(loc.line()));
+        appendMulti(" @ ", loc.file_name(), ':', Itoa{static_cast<std::uint64_t>(loc.line())});
         if (loc.function_name() != nullptr) {
             appendMulti(" (", loc.function_name(), ')');
         }
@@ -508,15 +511,15 @@ void writePreciseTimeSafe(InlineStringSpan str, const char* initDateStr,
         str.append(std::span{initDateStr, std::min(kInitDateLenUpToDay, std::strlen(initDateStr))});
         const auto initDaysSinceEpoch = initSecondsSinceEpoch / 86400;
         if (daysSinceEpoch > initDaysSinceEpoch) {
-            str.append(" + ");
-            str.itoaAppend(daysSinceEpoch - initDaysSinceEpoch);
-            str.append(" days\n");
+            str.appendMulti(" + ",
+                            utils::Itoa{static_cast<uint64_t>(daysSinceEpoch - initDaysSinceEpoch)},
+                            " days\n");
         } else {
             str.append('\n');
         }
     }
-    str.appendMulti("Fault Time: ", std::span{tempBuf}, " UTC\nUnix Epoch: ");
-    str.itoaAppend(tvSec);
+    str.appendMulti("Fault Time: ", std::span{tempBuf},
+                    " UTC\nUnix Epoch: ", utils::Itoa{static_cast<uint64_t>(tvSec)});
     if (!initWritten) {
         str.append('\n');
         return;
@@ -532,9 +535,8 @@ void writePreciseTimeSafe(InlineStringSpan str, const char* initDateStr,
     msBuf[0] = static_cast<char>((uptimeMilliSec / 100) + '0');
     msBuf[1] = static_cast<char>(((uptimeMilliSec / 10) % 10) + '0');
     msBuf[2] = static_cast<char>((uptimeMilliSec % 10) + '0');
-    str.append("\nUptime: ");
-    str.itoaAppend(uptimeSec);
-    str.appendMulti('.', std::span{msBuf}, " sec\n");
+    str.appendMulti("\nUptime: ", Itoa{static_cast<uint64_t>(uptimeSec)}, '.', std::span{msBuf},
+                    " sec\n");
 }
 
 void safePrint(const cpptrace::safe_object_frame& frame,
@@ -770,7 +772,7 @@ void invokeAndSaveUnwind(const PanicHook& f,
                          const std::optional<std::source_location>& loc = std::nullopt) noexcept {
     std::scoped_lock lock{hook::globalMutex};
 
-    unWindStorage.buffer.itoaAppend(1 + unWindStorage.counter++);
+    unWindStorage.buffer.append(utils::Itoa{1 + unWindStorage.counter++});
     unWindStorage.buffer.append(": ");
 #if FAULT_EXCEPTIONS
     try {
@@ -826,9 +828,7 @@ bool invokeAndSave(utils::InlineStringSpan buf) noexcept {
             effectiveMsg = "<Exception thrown on user callback>";
         }
 #endif
-        buf.append("( Thread Local ) ");
-        buf.itoaAppend(1 + called++);
-        buf.appendMulti(": ", effectiveMsg);
+        buf.appendMulti("( Thread Local ) ", utils::Itoa{1 + called++}, ": ", effectiveMsg);
         if (callback.loc.has_value()) {
             buf.append(*callback.loc);
         }
@@ -860,9 +860,7 @@ bool invokeAndSave(utils::InlineStringSpan buf) noexcept {
                 effectiveMsg = "<Exception thrown on user callback>";
             }
 #endif
-            buf.append("(    GLOBAL    ) ");
-            buf.itoaAppend(1 + called++);
-            buf.appendMulti(": ", effectiveMsg);
+            buf.appendMulti("(    GLOBAL    ) ", utils::Itoa{1 + called++}, ": ", effectiveMsg);
             if (callback.loc.has_value()) {
                 buf.append(*callback.loc);
             }
@@ -1230,14 +1228,14 @@ void safeAppendVEHInfo(struct ::_EXCEPTION_POINTERS* pExc, utils::InlineStringSp
         return;
     }
     const ::CONTEXT& ctx = *pExc->ContextRecord;
-    std::array<char, 19> regBuff{};
+    std::array<char, 18> regBuff{};
     str.append("\n\nRegisters (x64):");
 
     static constexpr auto kAddReg = [](const char* name, ::DWORD64 val, utils::InlineStringSpan str,
-                                       std::array<char, 19>& buff) {
+                                       std::array<char, 18>& buff) {
         str.append(name);
         utils::safeWriteHex(static_cast<std::uintptr_t>(val), buff);
-        str.append(std::span{buff.data(), 18});
+        str.append(std::span{buff});
     };
 
     kAddReg("\nRIP=", ctx.Rip, str, regBuff);
@@ -1253,7 +1251,7 @@ void safeAppendVEHInfo(struct ::_EXCEPTION_POINTERS* pExc, utils::InlineStringSp
     // Flags and Error Context
     str.append("\nEFLAGS=");
     utils::safeWriteHex(static_cast<std::uintptr_t>(ctx.EFlags), regBuff);
-    str.appendMulti(std::span{regBuff, 18}, '\n');
+    str.appendMulti(std::span{regBuff}, '\n');
 }
 
 const char* getExceptionString(::DWORD code) noexcept {
@@ -1614,36 +1612,36 @@ void safeAppendRegisters(const ::ucontext_t* ctx, utils::InlineStringSpan str) n
     }
 
     const auto& g = ctx->uc_mcontext.gregs;
-    std::array<char, 19> regBuff{};
+    std::array<char, 18> regBuff{};
     utils::safeWriteHex(g[REG_RIP], regBuff);
 
     // 1. Instruction and Stack Pointers (The "Big Three")
-    str.appendMulti("\nRegisters:\nRIP=", std::span{regBuff.data(), 18});
+    str.appendMulti("\nRegisters:\nRIP=", std::span{regBuff});
 
     utils::safeWriteHex(g[REG_RSP], regBuff);
-    str.appendMulti(" RSP=", std::span{regBuff.data(), 18});
+    str.appendMulti(" RSP=", std::span{regBuff});
     utils::safeWriteHex(g[REG_RBP], regBuff);
-    str.appendMulti(" RBP=", std::span{regBuff.data(), 18});
+    str.appendMulti(" RBP=", std::span{regBuff});
 
     // 2. Common General Purpose Registers (Helpful for finding null pointers/args)
     utils::safeWriteHex(g[REG_RAX], regBuff);
-    str.appendMulti("\nRAX=", std::span{regBuff.data(), 18});
+    str.appendMulti("\nRAX=", std::span{regBuff});
     utils::safeWriteHex(g[REG_RBX], regBuff);
-    str.appendMulti(" RBX=", std::span{regBuff.data(), 18});
+    str.appendMulti(" RBX=", std::span{regBuff});
     utils::safeWriteHex(g[REG_RCX], regBuff);
-    str.appendMulti(" RCX=", std::span{regBuff.data(), 18});
+    str.appendMulti(" RCX=", std::span{regBuff});
     utils::safeWriteHex(g[REG_RDX], regBuff);
-    str.appendMulti(" RDX=", std::span{regBuff.data(), 18});
+    str.appendMulti(" RDX=", std::span{regBuff});
 
     // 3. Argument Registers (RDI/RSI often contain the pointers being processed)
     utils::safeWriteHex(g[REG_RDI], regBuff);
-    str.appendMulti("\nRDI=", std::span{regBuff.data(), 18});
+    str.appendMulti("\nRDI=", std::span{regBuff});
     utils::safeWriteHex(g[REG_RSI], regBuff);
-    str.appendMulti(" RSI=", std::span{regBuff.data(), 18});
+    str.appendMulti(" RSI=", std::span{regBuff});
 
     // 4. Hardware Error Code (Very useful for SEGV analysis)
     utils::safeWriteHex(g[REG_ERR], regBuff);
-    str.appendMulti(" ERR=", regBuff.data(), '\n');
+    str.appendMulti(" ERR=", std::span{regBuff}, '\n');
 #endif
 }
 
@@ -1810,9 +1808,9 @@ struct LinuxHandling {
             LinuxHandling::finalBuffer.appendMulti(
                 "Reason: ", safePrintSiCode(LinuxHandling::signal, info->si_code),
                 "\nFault address: ");
-            std::array<char, 19> addrBuff{};
+            std::array<char, 18> addrBuff{};
             utils::safeWriteHex(reinterpret_cast<std::uintptr_t>(info->si_addr), addrBuff);
-            LinuxHandling::finalBuffer.appendMulti(std::span{addrBuff.data(), 18}, "\n\n");
+            LinuxHandling::finalBuffer.appendMulti(std::span{addrBuff}, "\n\n");
         }
         utils::writePreciseTimeSafe(LinuxHandling::finalBuffer.span(),
                                     _internal::gInitTime.str.data(), _internal::gInitTime.tvSec,
@@ -2356,8 +2354,7 @@ MAYBE_INLINED_NAMESPACE_V1 {
         if (!userMsg.empty()) {
             msg.appendMulti(" | ", userMsg);
         }
-        msg.appendMulti(" @ ", file, ':');
-        msg.itoaAppend(line);
+        msg.appendMulti(" @ ", file, ':', utils::Itoa{line});
         if (!func.empty()) {
             msg.appendMulti(" (", func, ')');
         }
