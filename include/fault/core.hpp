@@ -168,7 +168,8 @@ MAYBE_INLINED_NAMESPACE_V1 {
         std::vector<Frame> frames;
     };
 
-    using TerminateHook = void (*)(std::string_view userMessage, ObjectTrace& objectTrace);
+    using TerminateHook =
+        void (*)(std::string_view userMessage, std::optional<ObjectTrace>& objectTrace);
 
     enum class ConfigWarning : std::uint8_t {
         kNone = 0,
@@ -410,25 +411,25 @@ MAYBE_INLINED_NAMESPACE_V1 {
      * Example: Save a traced exception from a thread, signal main thread with shutdown request,
      * main thread does cleanup and panics if exception is saved
      *
+     * Passing a custom trace is optional. The library will automatically try to retrieve a trace
+     * from exception or a regular trace (in this order) if a trace is not provided.
+     *
      * @note Thread-safe
      * @note Not async-signal-safe (implied)
      */
-    FAULT_EXPORT void save_traced_exception(std::string_view msg,
-                                            const ObjectTrace* customTrace = nullptr) noexcept;
-
-    inline void save_traced_exception(std::string_view msg,
-                                      const std::optional<ObjectTrace>& customTrace) noexcept {
-        save_traced_exception(msg, customTrace.has_value() ? &*customTrace : nullptr);
-    }
+    FAULT_EXPORT void save_traced_exception(
+        std::string_view msg,
+        const std::optional<ObjectTrace>& customTrace = std::nullopt) noexcept;
 
     /**
      * @brief panic implementation
      *
      * @param message message to be displayed on report, stderr and popup
-     * @param customTrace Optional bject trace to be logged instead of default generated one.
+     * @param customTrace Optional object trace to be logged instead of default generated one.
      */
-    [[noreturn]] FAULT_EXPORT void panic_impl(std::string_view message,
-                                              const ObjectTrace* customTrace = nullptr) noexcept;
+    [[noreturn]] FAULT_EXPORT void panic_impl(
+        std::string_view message,
+        const std::optional<ObjectTrace>& customTrace = std::nullopt) noexcept;
 
     /**
      * @brief Use this to immediately shutdown the application and perform similar actions as the
@@ -440,7 +441,8 @@ MAYBE_INLINED_NAMESPACE_V1 {
      *
      */
     [[noreturn]] inline void panic(std::string_view message = {}) noexcept {
-        panic_impl(message, nullptr);
+        constexpr std::optional<ObjectTrace> kEmptyCustomTrace{std::nullopt};
+        panic_impl(message, kEmptyCustomTrace);
         FAULT_UNREACHABLE();
     }
 
@@ -463,9 +465,8 @@ MAYBE_INLINED_NAMESPACE_V1 {
      * @param trace Object trace to be logged instead of default generated one.
      * @param message message to be displayed on report, stderr and popup
      */
-    [[noreturn]] inline void panic(const ObjectTrace& trace,
-                                   std::string_view message = {}) noexcept {
-        panic_impl(message, &trace);
+    [[noreturn]] inline void panic(ObjectTrace trace, std::string_view message = {}) noexcept {
+        panic_impl(message, std::optional{std::move(trace)});
         FAULT_UNREACHABLE();
     }
 
@@ -477,7 +478,7 @@ MAYBE_INLINED_NAMESPACE_V1 {
      */
     [[noreturn]] inline void panic(const std::optional<ObjectTrace>& trace,
                                    std::string_view message = {}) noexcept {
-        panic_impl(message, trace.has_value() ? &*trace : nullptr);
+        panic_impl(message, trace);
         FAULT_UNREACHABLE();
     }
 
@@ -669,8 +670,8 @@ MAYBE_INLINED_NAMESPACE_V1 {
      */
     FAULT_EXPORT void try_catch(
         std::function<void()> body, CatchPolicy catchPolicy,
-        std::function<std::string(std::exception_ptr ep, const ObjectTrace& trace)> onException =
-            nullptr) noexcept;
+        std::function<std::string(std::exception_ptr ep, const std::optional<ObjectTrace>& trace)>
+            onException = nullptr) noexcept;
 
     /**
      * @brief Stores shutdown request

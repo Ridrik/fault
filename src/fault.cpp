@@ -36,7 +36,6 @@
 
 #include "fault/adapter/stacktrace.hpp"
 #include "fault/attributes.h"
-#include "fault/config.h"
 #include "fault/core.hpp"
 #include "fault/fault.h"
 #include "fault/macros.h"
@@ -193,6 +192,10 @@ struct InlineString {
         data_[size_] = '\0';
     }
 
+    constexpr void append(std::string_view str) noexcept {
+        append(std::span<const char>{str});
+    }
+
     template <std::size_t N_Other>
     constexpr void append(const char (&str)[N_Other]) noexcept {  // NOLINT
         for (const auto c : str) {
@@ -240,14 +243,10 @@ struct InlineString {
     }
 
     constexpr void append(const std::source_location& loc) {
-        append(" @ ");
-        append(loc.file_name());
-        append(':');
-        append(static_cast<std::uint64_t>(loc.line()));
+        appendMulti(" @ ", loc.file_name(), ':');
+        itoaAppend(static_cast<std::uint64_t>(loc.line()));
         if (loc.function_name() != nullptr) {
-            append(" (");
-            append(loc.function_name());
-            append(")");
+            appendMulti(" (", loc.function_name(), ')');
         }
     }
 
@@ -385,14 +384,10 @@ struct InlineStringSpan {
     }
 
     constexpr void append(const std::source_location& loc) {
-        append(" @ ");
-        append(loc.file_name());
-        append(':');
-        append(static_cast<std::uint64_t>(loc.line()));
+        appendMulti(" @ ", loc.file_name(), ':');
+        itoaAppend(static_cast<std::uint64_t>(loc.line()));
         if (loc.function_name() != nullptr) {
-            append(" (");
-            append(loc.function_name());
-            append(")");
+            appendMulti(" (", loc.function_name(), ')');
         }
     }
 
@@ -667,15 +662,14 @@ v1::ConfigWarning setCrashWriteDir(std::string_view dirStr, std::string_view fil
 #endif
 }
 
-[[nodiscard]] inline bool getSafeObjectTrace(cpptrace::object_trace& trace) noexcept {
+[[nodiscard]] inline std::optional<cpptrace::object_trace> getSafeObjectTrace() noexcept {
 #if FAULT_EXCEPTIONS
     try {
 #endif
-        trace = cpptrace::generate_object_trace();
-        return true;
+        return cpptrace::generate_object_trace();
 #if FAULT_EXCEPTIONS
     } catch (...) {
-        return false;
+        return std::nullopt;
     }
 #endif
 }
@@ -686,11 +680,11 @@ namespace exceptions {
 
 class TracedException : public std::exception {
    public:
-    TracedException(std::string msg, cpptrace::object_trace&& trace)
+    TracedException(std::string msg, std::optional<cpptrace::object_trace> trace)
         : msg_{std::move(msg)}, trace_{std::move(trace)} {}
 
-    [[nodiscard]] const cpptrace::object_trace& getTrace() const noexcept {
-        return trace_;
+    [[nodiscard]] std::optional<cpptrace::object_trace> getTrace() && noexcept {
+        return std::move(trace_);
     }
 
     [[nodiscard]] const char* what() const noexcept override {
@@ -699,30 +693,31 @@ class TracedException : public std::exception {
 
    private:
     std::string msg_;
-    cpptrace::object_trace trace_;
+    std::optional<cpptrace::object_trace> trace_;
 };
 
 std::exception_ptr pendingException{nullptr};  // NOLINT
 std::mutex mutex;                              // NOLINT
 
-void saveException(std::string_view msg, const v1::ObjectTrace* customTrace) noexcept {
+void saveException(std::string_view msg,
+                   const std::optional<v1::ObjectTrace>& customTrace) noexcept {
     std::scoped_lock lock{mutex};
-    cpptrace::object_trace trace{};
-    bool generateTrace{customTrace == nullptr};
-    if (customTrace != nullptr) {
+    std::optional<cpptrace::object_trace> trace{};
+    bool generateTrace{!customTrace.has_value()};
+    if (customTrace.has_value()) {
         auto optCustomTrace = adapter::v1::to_cpptrace(*customTrace);
         if (!optCustomTrace.has_value()) {
             generateTrace = true;
         } else {
-            trace = std::move(optCustomTrace).value();
+            trace = std::move(optCustomTrace);
         }
     }
     if (generateTrace) {
         if (auto optTraceFromException = utils::tryGetObjectTraceFromException();
             optTraceFromException.has_value()) {
-            trace = std::move(optTraceFromException).value();
-        } else if (!utils::getSafeObjectTrace(trace)) {
-            trace = {};
+            trace = std::move(optTraceFromException);
+        } else {
+            trace = utils::getSafeObjectTrace();
         }
     }
     pendingException = std::make_exception_ptr(
@@ -731,20 +726,26 @@ void saveException(std::string_view msg, const v1::ObjectTrace* customTrace) noe
 
 #if FAULT_EXCEPTIONS
 std::optional<std::string> rethrowAndAppendSavedExceptionTrace(
-    cpptrace::object_trace& baseTrace) noexcept {
+    std::optional<cpptrace::object_trace>& baseTrace) noexcept {
     std::scoped_lock lock{mutex};
     if (pendingException == nullptr) {
         return std::nullopt;
     }
     try {
         std::rethrow_exception(pendingException);
-    } catch (const TracedException& e) {
-        auto savedTrace = e.getTrace();
-        baseTrace.frames.push_back(
-            {.raw_address = 0, .object_address = 0, .object_path = {"====== PROPAGATED ======"}});
-        baseTrace.frames.insert(baseTrace.frames.end(),
-                                std::make_move_iterator(savedTrace.frames.begin()),
-                                std::make_move_iterator(savedTrace.frames.end()));
+    } catch (TracedException& e) {
+        auto savedTrace = std::move(e).getTrace();
+        if (savedTrace.has_value()) {
+            if (!baseTrace.has_value()) {
+                baseTrace = cpptrace::object_trace{};
+            }
+            baseTrace->frames.push_back({.raw_address = 0,
+                                         .object_address = 0,
+                                         .object_path = {"====== PROPAGATED ======"}});
+            baseTrace->frames.insert(baseTrace->frames.end(),
+                                     std::make_move_iterator(savedTrace->frames.begin()),
+                                     std::make_move_iterator(savedTrace->frames.end()));
+        }
         return e.what();
     }
     return std::nullopt;  // or unreachable even
@@ -777,14 +778,14 @@ struct {
 std::mutex globalMutex;  // NOLINT
 
 void resetBuffer() noexcept {
-    std::lock_guard lock{globalMutex};
+    std::scoped_lock lock{globalMutex};
     unWindStorage.counter = 0;
     unWindStorage.buffer.setSize(0);
 }
 
 void invokeAndSaveUnwind(const PanicHook& f,
                          const std::optional<std::source_location>& loc = std::nullopt) noexcept {
-    std::lock_guard lock{hook::globalMutex};
+    std::scoped_lock lock{hook::globalMutex};
 
     unWindStorage.buffer.itoaAppend(1 + unWindStorage.counter++);
     unWindStorage.buffer.append(": ");
@@ -809,11 +810,10 @@ void invokeAndSaveUnwind(const PanicHook& f,
 
 bool invokeAndSave(utils::InlineStringSpan buf) noexcept {
     {
-        std::lock_guard lock{globalMutex};
+        std::scoped_lock lock{globalMutex};
         if (!hook::unWindStorage.buffer.empty()) {
-            buf.append("\nUser provided unwind callback messages:\n");
-            buf.append(hook::unWindStorage.buffer.span());
-            buf.append('\n');
+            buf.appendMulti("\nUser provided unwind callback messages:\n",
+                            hook::unWindStorage.buffer.span(), '\n');
         }
     }
 
@@ -845,14 +845,14 @@ bool invokeAndSave(utils::InlineStringSpan buf) noexcept {
 #endif
         buf.append("( Thread Local ) ");
         buf.itoaAppend(1 + called++);
-        buf.appendMulti(": ", std::span{effectiveMsg.data(), effectiveMsg.size()});
+        buf.appendMulti(": ", effectiveMsg);
         if (callback.loc.has_value()) {
             buf.append(*callback.loc);
         }
         buf.append('\n');
     }
     {
-        std::lock_guard lock{globalMutex};
+        std::scoped_lock lock{globalMutex};
         for (const auto& callback : std::ranges::reverse_view(globalCallbacks)) {
             if (callback.f == nullptr) {
                 continue;
@@ -879,7 +879,7 @@ bool invokeAndSave(utils::InlineStringSpan buf) noexcept {
 #endif
             buf.append("(    GLOBAL    ) ");
             buf.itoaAppend(1 + called++);
-            buf.appendMulti(": ", std::span{effectiveMsg.data(), effectiveMsg.size()});
+            buf.appendMulti(": ", effectiveMsg);
             if (callback.loc.has_value()) {
                 buf.append(*callback.loc);
             }
@@ -911,9 +911,9 @@ std::tm timeInit() noexcept {
     const std::time_t t = std::chrono::system_clock::to_time_t(now);
     std::tm tmInfo{};
 #ifdef _WIN32
-    gmtime_s(&tmInfo, &t);
+    ::gmtime_s(&tmInfo, &t);
 #else
-    gmtime_r(&t, &tmInfo);
+    ::gmtime_r(&t, &tmInfo);
 #endif
     std::array<char, 24> baseTime{};
     std::strftime(baseTime.data(), baseTime.size(), "%Y-%m-%d %H:%M:%S", &tmInfo);
@@ -1533,8 +1533,8 @@ struct WindowsHandling {
 
     [[noreturn]] static void fromTerminate(std::string_view msg, std::string_view details, int code,
                                            bool printToStderr, bool writeReport,
-                                           cpptrace::object_trace&& customTrace, bool showPopUp,
-                                           bool resolveTrace) noexcept {
+                                           const std::optional<cpptrace::object_trace>& customTrace,
+                                           bool showPopUp, bool resolveTrace) noexcept {
         if (!WindowsHandling::checkPermissions()) {
             ExitHandler::shutdown(code);
             FAULT_UNREACHABLE();
@@ -1542,8 +1542,8 @@ struct WindowsHandling {
         WindowsHandling::showPopUp = showPopUp;
         constexpr ::PEXCEPTION_POINTERS kPExceptionInfo{nullptr};
         WindowsHandling::writeSummaryMessageToBuffer(kPExceptionInfo, msg, details);
-        WindowsHandling::commonActions(kPExceptionInfo, printToStderr, writeReport,
-                                       std::optional(std::move(customTrace)), resolveTrace);
+        WindowsHandling::commonActions(kPExceptionInfo, printToStderr, writeReport, customTrace,
+                                       resolveTrace);
         ExitHandler::shutdown(code);
         FAULT_UNREACHABLE();
     }
@@ -2070,17 +2070,17 @@ struct TerminateHandling {
     }
 
     static void runTerminateHook(utils::InlineStringSpan msg, utils::InlineStringSpan detail,
-                                 cpptrace::object_trace& trace) noexcept {
+                                 std::optional<cpptrace::object_trace>& trace) noexcept {
         if (TerminateHandling::terminateHook == nullptr) {
             return;
         }
 #if FAULT_EXCEPTIONS
         try {
 #endif
-            v1::ObjectTrace faultTrace =
-                adapter::v1::from_cpptrace(trace).value_or(v1::ObjectTrace{});
+            std::optional<v1::ObjectTrace> faultTrace =
+                trace.has_value() ? adapter::v1::from_cpptrace(*trace) : std::nullopt;
             TerminateHandling::terminateHook(std::string_view{msg}, faultTrace);
-            trace = adapter::v1::to_cpptrace(faultTrace).value_or(cpptrace::object_trace{});
+            trace = faultTrace.has_value() ? adapter::v1::to_cpptrace(*faultTrace) : std::nullopt;
 #if FAULT_EXCEPTIONS
         } catch (...) {
             detail.append(
@@ -2091,11 +2091,12 @@ struct TerminateHandling {
 #endif
     }
 
-    [[nodiscard]] static cpptrace::object_trace retrieveTraceWithMsg(
-        utils::InlineStringSpan detail, const v1::ObjectTrace* customTrace) noexcept {
-        cpptrace::object_trace cppObjTrace{};
-        bool generateTrace{customTrace == nullptr};
-        if (customTrace != nullptr) {
+    [[nodiscard]] static std::optional<cpptrace::object_trace> retrieveTraceWithMsg(
+        utils::InlineStringSpan detail,
+        const std::optional<v1::ObjectTrace>& customTrace) noexcept {
+        std::optional<cpptrace::object_trace> cppObjTrace{};
+        bool generateTrace{!customTrace.has_value()};
+        if (customTrace.has_value()) {
             const auto& refCustomTrace = *customTrace;
             if (refCustomTrace.frames.empty()) {
                 detail.append("Note: user provided empty trace. Generating a default one.\n");
@@ -2110,8 +2111,10 @@ struct TerminateHandling {
                 cppObjTrace = std::move(optAdaptTrace).value();
             }
         }
-        if (generateTrace && !utils::getSafeObjectTrace(cppObjTrace)) {
-            cppObjTrace = {};
+        if (!generateTrace) {
+            return cppObjTrace;
+        }
+        if (cppObjTrace = utils::getSafeObjectTrace(); !cppObjTrace.has_value()) {
             detail.append(
                 "Note: an internal error has occured while generating an object "
                 "trace. Base trace won't be reported.\n");
@@ -2122,7 +2125,7 @@ struct TerminateHandling {
     // Appends messages and traces for uncaught exceptions and for user saved traces/exceptions
     static void checkCommonExceptions([[maybe_unused]] utils::InlineStringSpan msg,
                                       utils::InlineStringSpan detail,
-                                      cpptrace::object_trace& trace) noexcept {
+                                      std::optional<cpptrace::object_trace>& trace) noexcept {
 #if FAULT_EXCEPTIONS
         try {
 #endif
@@ -2137,13 +2140,16 @@ struct TerminateHandling {
                         .has_value()) {  // Will only exist when cpptrace intercepted it
                                          // (implies consumer uses cpptrace try/catch)
                     auto& exceptionTrace = *optExceptionTrace;
-                    trace.frames.push_back(
+                    if (!trace.has_value()) {
+                        trace = cpptrace::object_trace{};
+                    }
+                    trace->frames.push_back(
                         cpptrace::object_frame{.raw_address = 0,
                                                .object_address = 0,
                                                .object_path = {"====== UPSTREAM ======"}});
-                    trace.frames.insert(trace.frames.end(),
-                                        std::make_move_iterator(exceptionTrace.frames.begin()),
-                                        std::make_move_iterator(exceptionTrace.frames.end()));
+                    trace->frames.insert(trace->frames.end(),
+                                         std::make_move_iterator(exceptionTrace.frames.begin()),
+                                         std::make_move_iterator(exceptionTrace.frames.end()));
                     detail.append(
                         "The initial unwind was saved and should be displayed "
                         "below, under '====== "
@@ -2186,9 +2192,9 @@ struct TerminateHandling {
     [[nodiscard]] static bool hasTerminateOrHigherBeenReached() noexcept {
         return hasAnySignalBeenTriggered() || TerminateHandling::hasBeenTriggered;
     }
-    [[noreturn]] static void controlledShutdown(std::string_view message, std::string_view details,
-                                                const Settings& settings,
-                                                cpptrace::object_trace&& customTrace) noexcept {
+    [[noreturn]] static void controlledShutdown(
+        std::string_view message, std::string_view details, const Settings& settings,
+        const std::optional<cpptrace::object_trace>& customTrace) noexcept {
 #ifdef __linux__
         constexpr int kTerminateCode{SIGABRT};
         LinuxHandling::fromTerminate(message, details, kTerminateCode, settings.printToStdErr,
@@ -2197,8 +2203,8 @@ struct TerminateHandling {
 #else
         constexpr int kTerminateCode{3};
         WindowsHandling::fromTerminate(message, details, kTerminateCode, settings.printToStdErr,
-                                       settings.writeReport, std::move(customTrace),
-                                       settings.showPopUp, _internal::config.resolveNonSignalTrace);
+                                       settings.writeReport, customTrace, settings.showPopUp,
+                                       _internal::config.resolveNonSignalTrace);
 #endif
         FAULT_UNREACHABLE();
     }
@@ -2215,7 +2221,7 @@ struct TerminateHandling {
             FAULT_UNREACHABLE();
         }
         const std::optional<std::string_view> startMsg{std::nullopt};
-        constexpr v1::ObjectTrace* kTrace{nullptr};
+        constexpr std::optional<const v1::ObjectTrace> kTrace{std::nullopt};
         TerminateHandling::terminateImpl(
             startMsg, Type::kStdTerminate,
             Settings{.writeReport = true,
@@ -2230,7 +2236,7 @@ struct TerminateHandling {
 
     static void terminateImpl(std::optional<std::string_view> startMsg, Type type,
                               const Settings& settings,
-                              const v1::ObjectTrace* customTrace) noexcept {
+                              const std::optional<v1::ObjectTrace>& customTrace) noexcept {
         utils::InlineString<1024> userMsg{};
         utils::InlineString<2048> details{};
         details.append(type == Type::kStdTerminate ? "Reason: std::terminate triggered.\n"
@@ -2257,7 +2263,7 @@ struct TerminateHandling {
             FAULT_UNREACHABLE();
         }
         TerminateHandling::controlledShutdown(std::string_view{userMsg}, std::string_view{details},
-                                              settings, std::move(cppObjTrace));
+                                              settings, cppObjTrace);
     }
 
     static void setup() noexcept {
@@ -2348,11 +2354,13 @@ MAYBE_INLINED_NAMESPACE_V1 {
         return tryInit(config);
     }
 
-    void save_traced_exception(std::string_view msg, const ObjectTrace* customTrace) noexcept {
+    void save_traced_exception(std::string_view msg,
+                               const std::optional<ObjectTrace>& customTrace) noexcept {
         exceptions::saveException(msg, customTrace);
     }
 
-    void panic_impl(std::string_view message, const ObjectTrace* customTrace) noexcept {
+    void panic_impl(std::string_view message,
+                    const std::optional<ObjectTrace>& customTrace) noexcept {
         TerminateHandling::terminateImpl(
             std::optional(message), TerminateHandling::Type::kPanic,
             TerminateHandling::Settings{.writeReport = _internal::config.panic.writeReport,
@@ -2367,18 +2375,18 @@ MAYBE_INLINED_NAMESPACE_V1 {
         utils::InlineString<1024> msg{};
         msg.append("Assertion failed");
         if (!expr.empty()) {
-            msg.appendMulti(": ", std::span{expr});
+            msg.appendMulti(": ", expr);
         }
         if (!userMsg.empty()) {
-            msg.appendMulti(" | ", std::span{userMsg});
+            msg.appendMulti(" | ", userMsg);
         }
-        msg.appendMulti(" @ ", std::span{file}, ':');
+        msg.appendMulti(" @ ", file, ':');
         msg.itoaAppend(line);
         if (!func.empty()) {
-            msg.appendMulti(" (", std::span{func}, ')');
+            msg.appendMulti(" (", func, ')');
         }
 
-        constexpr const ObjectTrace* kNoExceptionTrace{nullptr};
+        constexpr const std::optional<const ObjectTrace> kNoExceptionTrace{std::nullopt};
         panic_impl(std::string_view{msg.getData(), msg.getSize()}, kNoExceptionTrace);
         FAULT_UNREACHABLE();
     }
@@ -2389,10 +2397,10 @@ MAYBE_INLINED_NAMESPACE_V1 {
         FAULT_UNREACHABLE();
     }
 
-    void try_catch(
-        std::function<void()> body, [[maybe_unused]] CatchPolicy catchPolicy,
-        [[maybe_unused]] std::function<std::string(std::exception_ptr ep, const ObjectTrace& trace)>
-            onException) noexcept {
+    void try_catch(std::function<void()> body, [[maybe_unused]] CatchPolicy catchPolicy,
+                   [[maybe_unused]] std::function<std::string(
+                       std::exception_ptr ep, const std::optional<ObjectTrace>& trace)>
+                       onException) noexcept {
 #if FAULT_EXCEPTIONS
         bool onExceptionCalled{
             false};  // cpptrace actually recursively wraps lambda pairs until a remaining pair
@@ -2403,17 +2411,17 @@ MAYBE_INLINED_NAMESPACE_V1 {
 
         const auto kOnCatch = [&onException, &onExceptionCalled,
                                catchPolicy](std::string_view msg = "") {
-            cpptrace::object_trace cppObjTrace{};
-            if (auto optTrace = utils::tryGetObjectTraceFromException(); optTrace.has_value()) {
-                cppObjTrace = std::move(optTrace).value();
-            } else if (!utils::getSafeObjectTrace(cppObjTrace)) {
-                cppObjTrace = {};
+            auto cppObjTrace = utils::tryGetObjectTraceFromException();
+            if (!cppObjTrace.has_value()) {
+                cppObjTrace = utils::getSafeObjectTrace();
             }
             const auto objectTrace =
-                fault::adapter::from_cpptrace(cppObjTrace).value_or(ObjectTrace{});
+                cppObjTrace.has_value()
+                    ? std::optional<ObjectTrace>(fault::adapter::from_cpptrace(*cppObjTrace))
+                    : std::optional<ObjectTrace>{std::nullopt};
             auto effectiveMsg = msg;
+            std::string userMsg;
             try {
-                std::string userMsg;
                 if (!onExceptionCalled && onException != nullptr) {
                     onExceptionCalled = true;
                     userMsg = onException(std::current_exception(), objectTrace);
@@ -2426,11 +2434,11 @@ MAYBE_INLINED_NAMESPACE_V1 {
             }
             switch (catchPolicy) {
                 case CatchPolicy::kPanic: {
-                    panic_impl(effectiveMsg, &objectTrace);
+                    panic_impl(effectiveMsg, objectTrace);
                     FAULT_UNREACHABLE();
                 }
                 case CatchPolicy::kSaveExceptionWithShutdownRequest: {
-                    save_traced_exception(effectiveMsg, &objectTrace);
+                    save_traced_exception(effectiveMsg, objectTrace);
                     set_shutdown_request();
                     return;
                 }
@@ -2461,7 +2469,7 @@ MAYBE_INLINED_NAMESPACE_V1 {
             }
             return;
         }
-        std::lock_guard lock{hook::globalMutex};
+        std::scoped_lock lock{hook::globalMutex};
         for (std::size_t i{0}; i < hook::kMaxPanicHooks; ++i) {
             if (!hook::globalCallbacks[i].f) {
                 hook::globalCallbacks[i] = {.f = std::move(callback), .loc = loc};
@@ -2481,7 +2489,7 @@ MAYBE_INLINED_NAMESPACE_V1 {
             active_ = false;
             return;
         }
-        std::lock_guard lock{hook::globalMutex};
+        std::scoped_lock lock{hook::globalMutex};
         hook::globalCallbacks[idx_].release();
         active_ = false;
     }
@@ -2544,7 +2552,7 @@ MAYBE_INLINED_NAMESPACE_V1 {
             active_ = false;
             return;
         }
-        std::lock_guard lock{hook::globalMutex};
+        std::scoped_lock lock{hook::globalMutex};
         hook::globalCallbacks[idx_].release();
         active_ = false;
     }
@@ -2640,7 +2648,7 @@ FaultInitResultV1 fault_init_v1(const FaultConfigV1* config) FAULT_NOEXCEPT {
 }
 
 void fault_panic_v1(const char* message) FAULT_NOEXCEPT {
-    constexpr const fault::v1::ObjectTrace* kNoExceptionTrace{nullptr};
+    constexpr const std::optional<fault::v1::ObjectTrace> kNoExceptionTrace{std::nullopt};
     fault::v1::panic_impl(fault::utils::getSafeView(message), kNoExceptionTrace);
     FAULT_UNREACHABLE();
 }

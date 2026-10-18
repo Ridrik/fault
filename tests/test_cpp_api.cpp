@@ -3,6 +3,7 @@
 #include <exception>
 #include <format>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
@@ -72,7 +73,8 @@ int main() {
              .useUnsafeStacktraceOnSignalFallback = true,
              .generateMiniDumpWindows = true,
              .terminate = fault::Config::TerminateSettings{
-                 .enable = true, .userHook = [](std::string_view str, fault::ObjectTrace& trace) {
+                 .enable = true,
+                 .userHook = [](std::string_view str, std::optional<fault::ObjectTrace>& trace) {
                      throw 42;  // NOLINT
                  }}})) {
         std::cerr << "Failed to initialize fault.\n";
