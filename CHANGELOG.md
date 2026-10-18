@@ -1,9 +1,15 @@
+## v0.5.2 - October 2026
+### Updated
+- Changed trace signature, prefering std::optional over trace pointer. This is an API change on the functions and data members that make reference to a trace
+### Changed
+- Internal refactor in how inline strings were built and appended, increasing readability
+
 ## v0.5.1 - February 2026
-## Fixed
+### Fixed
 - The test crash file at startup is now properly removed (was left in an empty state before).
 
 ## v0.5.0 - January 2026
-## Added
+### Added
 - `UnwindGuard`, `UnwindGuardAt`, `FAULT_DEBUG_UNWIND_GUARD` and `FAULT_DEBUG_UNWIND_GUARD_AT`- Unwind guards are execution guards that trigger if an unwind process occurs on such object, i.e if an exception is threwn within a try/catch block. It does 2 things: execute arbitrary user functions, meaning it can be used as a 'scoped failure' feature; return a string that is saved on `fault` global context, which can then be logged to the report, if the user later panics or if `std::terminate` is hit.
    This feature complements `PanicGuard`, which is used instead to provide context guard against panic (including assertion failures).
    When to use it? It's recommended to use it for non-hot paths, in which an unwind implies fatal context in your application. For instance, any try/catch in which you'd be inclined to terminate your application in a catch block, is an appealing situation to have such guards in important sections of your code. Again, just like `cpptrace` within `fault` can provide traces from exceptions, `UnwindGuard` can provide human readable and state context of your application to the report.

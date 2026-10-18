@@ -136,7 +136,7 @@ struct InlineString {
 
     [[nodiscard]] InlineStringSpan span() noexcept;
 
-    operator std::string_view() const noexcept {
+    explicit operator std::string_view() const noexcept {
         return std::string_view{data_.data(), size_};
     }
 
@@ -153,7 +153,7 @@ struct InlineString {
     }
 
     constexpr void append(char c) noexcept {
-        if (c == '\0' || size_ >= N - 1) {
+        if (c == '\0' || size_ >= getCapacity() - 1) {
             return;
         }
         data_[size_++] = c;
@@ -162,10 +162,11 @@ struct InlineString {
 
     template <std::size_t N_Other>
     constexpr void append(const char (&str)[N_Other]) noexcept {  // NOLINT
-        for (std::size_t i{0}; i < N_Other - 1; ++i) {
-            if (size_ >= getCapacity() - 1) {
-                break;
-            }
+        if (size_ >= getCapacity() - 1) {
+            return;
+        }
+        const std::size_t toAppend = std::min(getCapacity() - size_ - 1, N_Other - 1);
+        for (std::size_t i{0}; i < toAppend; ++i) {
             data_[size_++] = str[i];
         }
         data_[size_] = '\0';
@@ -183,15 +184,13 @@ struct InlineString {
     }
 
     constexpr void append(std::span<const char> str) noexcept {
-        if (str.empty()) {
+        if (str.empty() || size_ >= getCapacity() - 1) {
             return;
         }
         std::size_t appended{0};
-        for (const auto c : str) {
-            if (size_ >= getCapacity() - 1) {
-                break;
-            }
-            data_[size_++] = c;
+        const std::size_t toAppend = std::min(getCapacity() - size_ - 1, str.size());
+        for (std::size_t i{0}; i < toAppend; ++i) {
+            data_[size_++] = str[i];
         }
         data_[size_] = '\0';
     }
@@ -243,8 +242,13 @@ struct InlineString {
         }
     }
 
-    constexpr void appendMulti(auto&&... args) {
+    constexpr void appendMulti(auto&&... args) noexcept {
         (append(std::forward<decltype(args)>(args)), ...);  // NOLINT
+    }
+
+    constexpr auto& operator+=(auto&& arg) noexcept {
+        append(std::forward<decltype(arg)>(arg));
+        return *this;
     }
 
    private:
@@ -266,7 +270,7 @@ struct InlineStringSpan {
         return data_.size();
     }
     [[nodiscard]] constexpr auto getSize() const noexcept {
-        return size_;
+        return size_.get();
     }
     [[nodiscard]] constexpr const auto* getData() const noexcept {
         return data_.data();
@@ -276,7 +280,7 @@ struct InlineStringSpan {
         return getSize() == 0;
     }
 
-    operator std::string_view() const noexcept {
+    explicit operator std::string_view() const noexcept {
         return std::string_view{data_.data(), size_};
     }
 
@@ -298,10 +302,11 @@ struct InlineStringSpan {
 
     template <std::size_t N_Other>
     constexpr void append(const char (&str)[N_Other]) noexcept {  // NOLINT
-        for (std::size_t i{0}; i < N_Other - 1; ++i) {
-            if (size_ >= getCapacity() - 1) {
-                break;
-            }
+        if (size_ >= getCapacity() - 1) {
+            return;
+        }
+        const std::size_t toAppend = std::min(getCapacity() - size_ - 1, N_Other - 1);
+        for (std::size_t i{0}; i < toAppend; ++i) {
             data_[size_++] = str[i];
         }
         data_[size_] = '\0';
@@ -319,15 +324,13 @@ struct InlineStringSpan {
     }
 
     constexpr void append(std::span<const char> str) noexcept {
-        if (str.empty()) {
+        if (str.empty() || size_ >= getCapacity() - 1) {
             return;
         }
         std::size_t appended{0};
-        for (const auto c : str) {
-            if (size_ >= getCapacity() - 1) {
-                break;
-            }
-            data_[size_++] = c;
+        const std::size_t toAppend = std::min(getCapacity() - size_ - 1, str.size());
+        for (std::size_t i{0}; i < toAppend; ++i) {
+            data_[size_++] = str[i];
         }
         data_[size_] = '\0';
     }
@@ -380,6 +383,11 @@ struct InlineStringSpan {
 
     constexpr void appendMulti(auto&&... args) {
         (append(std::forward<decltype(args)>(args)), ...);  // NOLINT
+    }
+
+    constexpr auto& operator+=(auto&& arg) noexcept {
+        append(std::forward<decltype(arg)>(arg));
+        return *this;
     }
 
    private:
@@ -772,8 +780,7 @@ void invokeAndSaveUnwind(const PanicHook& f,
                          const std::optional<std::source_location>& loc = std::nullopt) noexcept {
     std::scoped_lock lock{hook::globalMutex};
 
-    unWindStorage.buffer.append(utils::Itoa{1 + unWindStorage.counter++});
-    unWindStorage.buffer.append(": ");
+    unWindStorage.buffer.appendMulti(utils::Itoa{1 + unWindStorage.counter++}, ": ");
 #if FAULT_EXCEPTIONS
     try {
 #endif
@@ -2336,7 +2343,7 @@ MAYBE_INLINED_NAMESPACE_V1 {
     void panic_impl(std::string_view message,
                     const std::optional<ObjectTrace>& customTrace) noexcept {
         TerminateHandling::terminateImpl(
-            std::optional(message), TerminateHandling::Type::kPanic,
+            std::optional{message}, TerminateHandling::Type::kPanic,
             TerminateHandling::Settings{.writeReport = _internal::config.panic.writeReport,
                                         .printToStdErr = _internal::config.panic.printMsgToStdErr,
                                         .showPopUp = _internal::config.panic.showPopUp},
@@ -2360,7 +2367,7 @@ MAYBE_INLINED_NAMESPACE_V1 {
         }
 
         constexpr const std::optional<const ObjectTrace> kNoExceptionTrace{std::nullopt};
-        panic_impl(std::string_view{msg.getData(), msg.getSize()}, kNoExceptionTrace);
+        panic_impl(std::string_view{msg}, kNoExceptionTrace);
         FAULT_UNREACHABLE();
     }
 
