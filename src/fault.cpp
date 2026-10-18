@@ -1868,13 +1868,9 @@ struct LinuxHandling {
     };
 
     static void writeSummaryMessageToBuffer(std::string_view description) noexcept {
-        {
-            LinuxHandling::titleBuffer.clear();  // Redundancy
-            LinuxHandling::titleBuffer.appendMulti(_internal::config.appName.data(),
-                                                   " Fatal Error");
-        }
-
-        LinuxHandling::titleBuffer.appendMulti(_internal::config.baseErrorMessage.data(),
+        LinuxHandling::titleBuffer.clear();  // Redundancy
+        LinuxHandling::titleBuffer.appendMulti(_internal::config.appName.data(), " Fatal Error");
+        LinuxHandling::finalBuffer.appendMulti(_internal::config.baseErrorMessage.data(),
                                                "\n\nDescription: ");
         const auto filteredMsg = description.empty() ? "<no message>" : description;
         LinuxHandling::finalBuffer.appendMulti(std::span{filteredMsg.data(), filteredMsg.size()},
@@ -1942,11 +1938,9 @@ struct LinuxHandling {
                 : false;
         if (printToStderr) {
             utils::InlineString<2048> stdErrBfr{};
-            stdErrBfr.append("\n--- FAULT REPORT v");
-            stdErrBfr.append(version::kString);
-            stdErrBfr.append(" ---\n");
+            stdErrBfr.appendMulti("\n--- FAULT REPORT v", version::kString, " ---\n");
             LinuxHandling::finalBuffer.setSize(LinuxHandling::offsetForMsg);
-            stdErrBfr.append(LinuxHandling::finalBuffer);
+            stdErrBfr.appendMulti(LinuxHandling::finalBuffer);
             if (written) {
                 stdErrBfr.appendMulti("\nFull log at: ", _internal::config.crashPath.data());
             } else if (writeReport) {
@@ -2037,9 +2031,8 @@ struct LinuxHandling {
         LinuxHandling::signal = code;
         LinuxHandling::showPopUp = showPopUp;
         LinuxHandling::shouldReRaiseSignal = true;
-        std::size_t offset{0};
-        LinuxHandling::offsetForMsg = offset;
         LinuxHandling::writeSummaryMessageToBuffer(msg);
+        LinuxHandling::offsetForMsg = LinuxHandling::finalBuffer.getSize();
         if (!details.empty()) {
             LinuxHandling::finalBuffer.appendMulti("\nTechnical comments: ",
                                                    std::span{details.data(), details.size()});
