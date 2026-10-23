@@ -27,20 +27,6 @@
 #include <system_error>
 #include <utility>
 
-#include <cpptrace/basic.hpp>
-#include <cpptrace/cpptrace.hpp>
-#include <cpptrace/exceptions.hpp>
-#include <cpptrace/forward.hpp>
-#include <cpptrace/from_current.hpp>
-#include <cpptrace/utils.hpp>
-
-#include "fault/adapter/stacktrace.hpp"
-#include "fault/attributes.h"
-#include "fault/core.hpp"
-#include "fault/fault.h"
-#include "fault/macros.h"
-#include "fault/version.h"
-
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 // clang-format off
@@ -79,7 +65,21 @@
 #include <sys/wait.h>
 #endif
 
-#if defined(__cpp_exceptions)
+#include <cpptrace/basic.hpp>
+#include <cpptrace/cpptrace.hpp>
+#include <cpptrace/exceptions.hpp>
+#include <cpptrace/forward.hpp>
+#include <cpptrace/from_current.hpp>
+#include <cpptrace/utils.hpp>
+
+#include "fault/adapter/stacktrace.hpp"
+#include "fault/attributes.h"
+#include "fault/core.hpp"
+#include "fault/fault.h"
+#include "fault/macros.h"
+#include "fault/version.h"
+
+#ifdef __cpp_exceptions
 #define FAULT_EXCEPTIONS 1
 #else
 #define FAULT_EXCEPTIONS 0
@@ -673,27 +673,37 @@ namespace exceptions {
 
 class TracedException : public std::exception {
    public:
-    TracedException(std::string msg, std::optional<cpptrace::object_trace> trace)
-        : msg_{std::move(msg)}, trace_{std::move(trace)} {}
+    TracedException(std::string msg, std::optional<cpptrace::object_trace> trace,
+                    std::optional<std::string> excpTypeStr)
+        : msg_{std::move(msg)}, trace_{std::move(trace)}, excpTypeStr_{std::move(excpTypeStr)} {}
 
     [[nodiscard]] std::optional<cpptrace::object_trace> getTrace() && noexcept {
         return std::move(trace_);
+    }
+
+    [[nodiscard]] std::optional<std::string> getExceptionStringType() && noexcept {
+        return std::move(excpTypeStr_);
     }
 
     [[nodiscard]] const char* what() const noexcept override {
         return msg_.c_str();
     }
 
+    [[nodiscard]] std::string str() && noexcept {
+        return std::move(msg_);
+    }
+
    private:
     std::string msg_;
     std::optional<cpptrace::object_trace> trace_;
+    std::optional<std::string> excpTypeStr_;
 };
 
 std::exception_ptr pendingException{nullptr};  // NOLINT
 std::mutex mutex;                              // NOLINT
 
-void saveException(std::string_view msg,
-                   const std::optional<v1::ObjectTrace>& customTrace) noexcept {
+void saveException(std::string_view msg, const std::optional<v1::ObjectTrace>& customTrace,
+                   std::optional<std::string> excpTypeStr) noexcept {
     std::scoped_lock lock{mutex};
     std::optional<cpptrace::object_trace> trace{};
     bool generateTrace{!customTrace.has_value()};
@@ -713,21 +723,24 @@ void saveException(std::string_view msg,
             trace = utils::getSafeObjectTrace();
         }
     }
-    pendingException = std::make_exception_ptr(
-        TracedException{!msg.empty() ? std::string{msg} : "<Unspecified>", std::move(trace)});
+    pendingException =
+        std::make_exception_ptr(TracedException{!msg.empty() ? std::string{msg} : "<Unspecified>",
+                                                std::move(trace), std::move(excpTypeStr)});
 }
 
 #if FAULT_EXCEPTIONS
-std::optional<std::string> rethrowAndAppendSavedExceptionTrace(
-    std::optional<cpptrace::object_trace>& baseTrace) noexcept {
+void rethrowAndAppendSavedExceptionTrace(std::optional<cpptrace::object_trace>& baseTrace,
+                                         utils::InlineStringSpan msg,
+                                         utils::InlineStringSpan details) noexcept {
     std::scoped_lock lock{mutex};
     if (pendingException == nullptr) {
-        return std::nullopt;
+        return;
     }
     try {
         std::rethrow_exception(pendingException);
     } catch (TracedException& e) {
         auto savedTrace = std::move(e).getTrace();
+        const auto exTypeStr = std::move(e).getExceptionStringType();
         if (savedTrace.has_value()) {
             if (!baseTrace.has_value()) {
                 baseTrace = cpptrace::object_trace{};
@@ -739,9 +752,34 @@ std::optional<std::string> rethrowAndAppendSavedExceptionTrace(
                                      std::make_move_iterator(savedTrace->frames.begin()),
                                      std::make_move_iterator(savedTrace->frames.end()));
         }
-        return e.what();
+        const auto& str = std::move(e).str();
+        utils::InlineString<128> optExTypeStr;
+        if (exTypeStr.has_value()) {
+            optExTypeStr.appendFmt(", of (mangled) type {}.", *exTypeStr);
+        } else {
+            optExTypeStr += '.';
+        }
+        if (str.empty()) {
+            msg.append("\nPropagated from upstream exception.");
+            details.appendFmt(
+                "A saved exception was retrieved with no message "
+                "provided{}\nIt should be "
+                "visible in "
+                "the object/stack trace, under the delimiter '====== "
+                "PROPAGATED ======' "
+                "artifitial frame.\n",
+                std::string_view{optExTypeStr});
+        } else {
+            msg.appendFmt("\nPropagated from upstream exception: {}.", str);
+            details.appendFmt(
+                "A saved exception was retrieved with message: {}{}\nIt should "
+                "be visible in "
+                "the object/stack trace, under the delimiter '====== "
+                "PROPAGATED ======' "
+                "artifitial frame.\n",
+                str, std::string_view{optExTypeStr});
+        }
     }
-    return std::nullopt;  // or unreachable even
 }
 #endif
 
@@ -1613,7 +1651,7 @@ inline const char* safePrintSiCode(int sig, int code) noexcept {
 }
 
 void safeAppendRegisters(const ::ucontext_t* ctx, utils::InlineStringSpan str) noexcept {
-#if defined(__x86_64__)
+#ifdef __x86_64__
     if (ctx == nullptr) {
         return;
     }
@@ -2138,29 +2176,7 @@ struct TerminateHandling {
                 }
             }
 #if FAULT_EXCEPTIONS
-            if (const auto optRethrowStr = exceptions::rethrowAndAppendSavedExceptionTrace(trace);
-                optRethrowStr.has_value()) {
-                const auto& str = *optRethrowStr;
-                if (!str.empty()) {
-                    msg.appendFmt("\nPropagated from upstream exception: {}.", str);
-                    detail.appendFmt(
-                        "A saved exception was retrieved with message: {}.\nIt should "
-                        "be visible in "
-                        "the object/stack trace, under the delimiter '====== "
-                        "PROPAGATED ======' "
-                        "artifitial frame.\n",
-                        str);
-                } else {
-                    msg.append("\nPropagated from upstream exception.");
-                    detail.append(
-                        "A saved exception was retrieved with no message "
-                        "provided.\nIt should be "
-                        "visible in "
-                        "the object/stack trace, under the delimiter '====== "
-                        "PROPAGATED ======' "
-                        "artifitial frame.\n");
-                }
-            }
+            exceptions::rethrowAndAppendSavedExceptionTrace(trace, msg, detail);
         } catch (...) {
             detail.append(
                 "\n[Internal error while appending data from uncaught exception and "
@@ -2335,9 +2351,9 @@ MAYBE_INLINED_NAMESPACE_V1 {
         return tryInit(config);
     }
 
-    void save_traced_exception(std::string_view msg,
-                               const std::optional<ObjectTrace>& customTrace) noexcept {
-        exceptions::saveException(msg, customTrace);
+    void save_traced_exception(std::string_view msg, const std::optional<ObjectTrace>& customTrace,
+                               std::optional<std::string> excpTypeStr) noexcept {
+        exceptions::saveException(msg, customTrace, std::move(excpTypeStr));
     }
 
     void panic_impl(std::string_view message,
@@ -2389,8 +2405,9 @@ MAYBE_INLINED_NAMESPACE_V1 {
                      // an edge case scenario where the first catch also throws. Therefore, this is
                      // to protect against the user callback being called twice.
 
-        const auto kOnCatch = [&onException, &onExceptionCalled,
-                               catchPolicy](std::string_view msg = "") {
+        const auto kOnCatch = [&onException, &onExceptionCalled, catchPolicy](
+                                  std::string_view msg = "",
+                                  std::optional<std::string> excpTypeName = std::nullopt) {
             auto cppObjTrace = utils::tryGetObjectTraceFromException();
             if (!cppObjTrace.has_value()) {
                 cppObjTrace = utils::getSafeObjectTrace();
@@ -2418,7 +2435,7 @@ MAYBE_INLINED_NAMESPACE_V1 {
                     FAULT_UNREACHABLE();
                 }
                 case CatchPolicy::kSaveExceptionWithShutdownRequest: {
-                    save_traced_exception(effectiveMsg, objectTrace);
+                    save_traced_exception(effectiveMsg, objectTrace, std::move(excpTypeName));
                     set_shutdown_request();
                     return;
                 }
@@ -2428,7 +2445,8 @@ MAYBE_INLINED_NAMESPACE_V1 {
             FAULT_UNREACHABLE();
         };
         cpptrace::try_catch(
-            std::move(body), [&kOnCatch](const std::exception& e) { kOnCatch(e.what()); },
+            std::move(body),
+            [&kOnCatch](const std::exception& e) { kOnCatch(e.what(), typeid(e).name()); },
             [&kOnCatch]() { kOnCatch(); });
 #else
         body();
