@@ -7,6 +7,7 @@ Checks: >
   performance-*,
   portability-*,
   readability-*,
+  misc-include-cleaner,
   -readability-magic-numbers,
   -readability-identifier-length,
   -readability-math-missing-parentheses,
@@ -40,3 +41,4 @@ CheckOptions:
   readability-identifier-naming.EnumConstantPrefix: k
   readability-identifier-naming.ConstexprVariableCase: CamelCase
   readability-identifier-naming.ConstexprVariablePrefix: k
+  misc-include-cleaner.AnalyzeAngledIncludes: 'true'

@@ -16,19 +16,19 @@ SortIncludes: true
 IncludeBlocks: Regroup
 DerivePointerAlignment: false
 IncludeCategories:
-  - Regex: '^<[^/]*>$'
+  - Regex: '^<[^/.]*>$'
     Priority: 1
-    SortPriority: 1
-    CaseSensitive: true
-  
-  - Regex: '^<.*/'
-    Priority: 2
-    SortPriority: 2
-    CaseSensitive: true
+
+  - Regex: '^<[^/.]*.h>$'
+    Priority: 1
+
+  - Regex: '^["<](cpptrace)'
+    Priority: 3
+
+  - Regex: '^["<]fault/'
+    Priority: 4
   
   - Regex: '.*'
-    Priority: 3
-    SortPriority: 3
-    CaseSensitive: true
+    Priority: 5
 
 IncludeIsMainRegex: '.*'

@@ -10,6 +10,7 @@
 #include "fault/attributes.h"
 #include "fault/config.h"
 #include "fault/core.hpp"
+#include "fault/macros.h"
 
 namespace fault {  // NOLINT(modernize-concat-nested-namespaces)
 
