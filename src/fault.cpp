@@ -100,6 +100,171 @@ static_assert(std::atomic<int>::is_always_lock_free,
 
 constexpr const char* const kHexChars = "0123456789abcdef";
 
+struct OutputSource {
+   public:
+#ifdef __linux__
+    using descriptor = int;
+    static constexpr descriptor stdErrFD = STDERR_FILENO;
+#else
+    using descriptor = ::HANDLE;
+#endif
+
+    OutputSource() = delete;
+    explicit OutputSource(descriptor fd) : fd_{fd} {}
+
+    OutputSource(const OutputSource&) = delete;
+    OutputSource& operator=(const OutputSource&) = delete;
+    OutputSource(OutputSource&&) = delete;
+    OutputSource& operator=(OutputSource&&) = delete;
+
+    ~OutputSource() = default;
+
+    static OutputSource StdErrOutput() {
+#ifdef _WIN32
+        static const descriptor stdErrFD = ::GetStdHandle(STD_ERROR_HANDLE);
+#endif
+        return OutputSource{stdErrFD};
+    }
+
+    void print(char c) {  // NOLINT
+#ifdef __linux__
+        [[maybe_unused]] ssize_t bytes = ::write(fd_, &c, 1);
+#else
+        ::DWORD written{};
+        ::WriteFile(fd_, &c, 1, &written, nullptr);
+#endif
+    }
+
+    template <std::size_t N>
+    void print(const char (&str)[N]) noexcept {  // NOLINT
+#ifdef __linux__
+        [[maybe_unused]] ssize_t bytes = ::write(fd_, &str[0], N - 1);
+#else
+        ::DWORD written{};
+        ::WriteFile(fd_, &str[0], static_cast< ::DWORD>(N - 1), &written, nullptr);
+#endif
+    }
+
+    void print(std::string_view str) noexcept {  // NOLINT
+#ifdef __linux__
+        [[maybe_unused]] ssize_t bytes = ::write(fd_, str.data(), str.size());
+#else
+        if (str.empty()) {
+            return;
+        }
+        ::DWORD written{};
+        ::WriteFile(fd_, str.data(), static_cast< ::DWORD>(str.size()), &written, nullptr);
+#endif
+    }
+
+    void print(std::uintptr_t value) noexcept {
+        std::array<char, 18> buf{};  // "0x" + 16 chars
+        buf[0] = '0';
+        buf[1] = 'x';
+        for (int i{0}; i < 16; ++i) {
+            buf[17 - i] = kHexChars[(value >> (i * 4)) & 0xF];
+        }
+        print(std::string_view{buf.data(), buf.size()});
+    }
+
+    void print(const cpptrace::safe_object_frame& frame) noexcept {
+        printMulti(frame.raw_address, ' ', frame.address_relative_to_object_start, ' ',
+                   std::string_view{&frame.object_path[0]});
+    }
+
+    void printMulti(auto&&... args) {
+        (print(std::forward<decltype(args)>(args)), ...);
+    }
+
+    [[nodiscard]] descriptor getHandle() const noexcept {
+        return fd_;
+    }
+
+   protected:
+    descriptor fd_;
+};
+
+#ifdef _WIN32
+
+inline bool utf8ToUtf16Stack(const char* utf8, wchar_t* out, int outLen) noexcept {
+    const int written = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, out, outLen);
+    return written > 0;
+}
+
+#endif
+
+struct File : public OutputSource {
+   public:
+#ifdef _WIN32
+    using StringView = std::wstring_view;
+#else
+    using StringView = std::string_view;
+#endif
+
+    File(StringView path)
+        :
+#ifdef __linux__
+          OutputSource{::open(path.data(), O_WRONLY | O_CREAT | O_TRUNC, 0644)}
+#else
+          OutputSource{::CreateFileW(path.data(),      // File name
+                                     GENERIC_WRITE,    // Access mode
+                                     FILE_SHARE_READ,  // Share mode
+                                     nullptr,          // Security attributes
+                                     CREATE_ALWAYS,    // Creation disposition
+                                     FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,  // Flags
+                                     nullptr                                           // Template
+                                     )}
+#endif
+    {
+    }
+
+#ifdef _WIN32
+    template <std::size_t WidePathN>
+#endif
+    static File makeFile(std::string_view path) {
+#ifdef __linux__
+        return File{path};
+#else
+        std::array<wchar_t, WidePathN> pathWide{};
+        if (!utils::utf8ToUtf16Stack(path.data(), pathWide.data(), pathWide.size())) {
+            return File{File::invalidDescriptor()};
+        }
+        return File{std::wstring_view{pathWide.data()}};
+#endif
+    }
+
+    File(const File&) = delete;
+    File& operator=(const File&) = delete;
+    File(File&&) = delete;
+    File& operator=(File&&) = delete;
+
+    ~File() {
+        if (invalid()) {
+            return;
+        }
+#ifdef __linux__
+        ::close(fd_);
+#else
+        ::CloseHandle(fd_);
+#endif
+    }
+
+    [[nodiscard]] bool invalid() const noexcept {
+        return fd_ == File::invalidDescriptor();
+    }
+
+   private:
+    [[nodiscard]] static descriptor invalidDescriptor() noexcept {
+#ifdef __linux__
+        return -1;
+#else
+        return INVALID_HANDLE_VALUE;
+#endif
+    }
+
+    File(descriptor fd) : OutputSource{fd} {}
+};
+
 constexpr void safeWriteHex(std::uintptr_t value, std::array<char, 18>& buf) noexcept {
     buf[0] = '0';
     buf[1] = 'x';
@@ -166,9 +331,8 @@ struct InlineString {
             return;
         }
         const std::size_t toAppend = std::min(getCapacity() - size_ - 1, N_Other - 1);
-        for (std::size_t i{0}; i < toAppend; ++i) {
-            data_[size_++] = str[i];
-        }
+        std::memcpy(&data_[size_], &str[0], toAppend);
+        size_ += toAppend;
         data_[size_] = '\0';
     }
 
@@ -187,11 +351,9 @@ struct InlineString {
         if (str.empty() || size_ >= getCapacity() - 1) {
             return;
         }
-        std::size_t appended{0};
         const std::size_t toAppend = std::min(getCapacity() - size_ - 1, str.size());
-        for (std::size_t i{0}; i < toAppend; ++i) {
-            data_[size_++] = str[i];
-        }
+        std::memcpy(&data_[size_], str.data(), toAppend);
+        size_ += toAppend;
         data_[size_] = '\0';
     }
 
@@ -237,8 +399,9 @@ struct InlineString {
 
     constexpr void append(const std::source_location& loc) {
         appendMulti(" @ ", loc.file_name(), ':', Itoa{static_cast<std::uint64_t>(loc.line())});
-        if (loc.function_name() != nullptr) {
-            appendMulti(" (", loc.function_name(), ')');
+        const auto* fName = loc.function_name();
+        if (fName != nullptr && fName[0] != '\0') {
+            appendMulti(" (", std::string_view{fName}, ')');
         }
     }
 
@@ -306,9 +469,8 @@ struct InlineStringSpan {
             return;
         }
         const std::size_t toAppend = std::min(getCapacity() - size_ - 1, N_Other - 1);
-        for (std::size_t i{0}; i < toAppend; ++i) {
-            data_[size_++] = str[i];
-        }
+        std::memcpy(&data_[size_], &str[0], toAppend);
+        size_ += toAppend;
         data_[size_] = '\0';
     }
 
@@ -327,11 +489,9 @@ struct InlineStringSpan {
         if (str.empty() || size_ >= getCapacity() - 1) {
             return;
         }
-        std::size_t appended{0};
         const std::size_t toAppend = std::min(getCapacity() - size_ - 1, str.size());
-        for (std::size_t i{0}; i < toAppend; ++i) {
-            data_[size_++] = str[i];
-        }
+        std::memcpy(&data_[size_], str.data(), toAppend);
+        size_ += toAppend;
         data_[size_] = '\0';
     }
 
@@ -376,8 +536,9 @@ struct InlineStringSpan {
 
     constexpr void append(const std::source_location& loc) {
         appendMulti(" @ ", loc.file_name(), ':', Itoa{static_cast<std::uint64_t>(loc.line())});
-        if (loc.function_name() != nullptr) {
-            appendMulti(" (", loc.function_name(), ')');
+        const auto* fName = loc.function_name();
+        if (fName != nullptr && fName[0] != '\0') {
+            appendMulti(" (", std::string_view{fName}, ')');
         }
     }
 
@@ -432,68 +593,6 @@ void getNowSafe(std::int64_t& outSec, std::int64_t& outNsec) noexcept {
 #endif
 }
 
-#ifdef __linux__
-
-inline void safePrint(const char* str, std::size_t len, int fd = STDERR_FILENO) noexcept {
-    [[maybe_unused]] ssize_t bytes = ::write(fd, str, len);
-}
-
-inline void safePrint(const char* str, int fd = STDERR_FILENO) noexcept {
-    [[maybe_unused]] ssize_t bytes = ::write(fd, str, std::strlen(str));
-}
-
-void safeWriteHex(std::uintptr_t value, int fd = STDERR_FILENO) noexcept {
-    std::array<char, 18> buf{};  // "0x" + 16 chars
-    buf[0] = '0';
-    buf[1] = 'x';
-    for (int i{0}; i < 16; ++i) {
-        buf[17 - i] = kHexChars[(value >> (i * 4)) & 0xF];
-    }
-    safePrint(buf.data(), buf.size(), fd);
-}
-
-#else
-
-inline auto getStdHandle(::DWORD nStdHandle) noexcept {
-    return ::GetStdHandle(nStdHandle);
-}
-
-const ::HANDLE hFileDefault = getStdHandle(STD_ERROR_HANDLE);
-
-inline void safePrint(const char* str, std::size_t len, ::HANDLE hFile = hFileDefault) noexcept {
-    if (str == nullptr) {
-        return;
-    }
-    ::DWORD written{};
-    ::WriteFile(hFile, str, static_cast<::DWORD>(len), &written, nullptr);
-}
-
-inline void safePrint(const char* str, ::HANDLE hFile = hFileDefault) noexcept {
-    if (str == nullptr) {
-        return;
-    }
-    ::DWORD written{};
-    // We use strlen here; it is safe as it only reads memory
-    ::WriteFile(hFile, str, static_cast<::DWORD>(std::strlen(str)), &written, nullptr);
-}
-
-inline bool utf8ToUtf16Stack(const char* utf8, wchar_t* out, int outLen) noexcept {
-    const int written = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, out, outLen);
-    return written > 0;
-}
-
-void safeWriteHex(std::uintptr_t value, ::HANDLE hFile = hFileDefault) noexcept {
-    std::array<char, 18> buf{};
-    buf[0] = '0';
-    buf[1] = 'x';
-    for (int i{0}; i < 16; ++i) {
-        buf[17 - i] = kHexChars[(value >> (i * 4)) & 0xF];
-    }
-    safePrint(buf.data(), buf.size(), hFile);
-}
-
-#endif
-
 void writePreciseTimeSafe(InlineStringSpan str, const char* initDateStr,
                           std::int64_t initSecondsSinceEpoch,
                           std::int64_t initNanoSecondsSinceEpoch, bool initWritten) noexcept {
@@ -545,20 +644,6 @@ void writePreciseTimeSafe(InlineStringSpan str, const char* initDateStr,
     msBuf[2] = static_cast<char>((uptimeMilliSec % 10) + '0');
     str.appendMulti("\nUptime: ", Itoa{static_cast<uint64_t>(uptimeSec)}, '.', std::span{msBuf},
                     " sec\n");
-}
-
-void safePrint(const cpptrace::safe_object_frame& frame,
-#ifdef __linux__
-               int fd = STDERR_FILENO
-#else
-               ::HANDLE fd = getStdHandle(STD_ERROR_HANDLE)
-#endif
-               ) noexcept {
-    safeWriteHex(frame.raw_address, fd);
-    safePrint(" ", fd);
-    safeWriteHex(frame.address_relative_to_object_start, fd);
-    safePrint(" ", fd);
-    safePrint(&frame.object_path[0], fd);
 }
 
 inline std::size_t strSafeCopy(char* dest, std::size_t maxLen, std::string_view src) noexcept {
@@ -1083,7 +1168,7 @@ void writeToStdErr(std::string_view message) noexcept {
         parkThreadForever();
         FAULT_UNREACHABLE();
     }
-    utils::safePrint(message.data(), message.size());
+    utils::OutputSource::StdErrOutput().print(message);
 }
 
 // Note on noexcept: when coming from panic or std::terminate, trace is already provided and will
@@ -1103,84 +1188,51 @@ bool writeReport(std::string_view errContext,
     if (!config.isReportWritable) {
         return false;
     }
-#ifdef __linux__
-    const int fd = ::open(config.crashPath.data(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd == -1) {
-#else
-    std::array<wchar_t, _internal::Config::kCrashPathSize> crashPathWide{};
-    const ::HANDLE fd =
-        utils::utf8ToUtf16Stack(config.crashPath.data(), crashPathWide.data(),
-                                crashPathWide.size())
-            ? ::CreateFileW(crashPathWide.data(),  // File name
-                            GENERIC_WRITE,         // Access mode
-                            FILE_SHARE_READ,       // Share mode
-                            nullptr,               // Security attributes
-                            CREATE_ALWAYS,         // Creation disposition
-                            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,  // Flags
-                            nullptr                                           // Template
-                            )
-            : INVALID_HANDLE_VALUE;
-    if (fd == INVALID_HANDLE_VALUE) {
-#endif
+    auto file = utils::File::makeFile<_internal::Config::kCrashPathSize>(
+        std::string_view{config.crashPath.data()});
+    if (file.invalid()) {
         return false;
     }
-    utils::safePrint("--- FAULT REPORT v", fd);
-    utils::safePrint(version::kString, fd);
-    utils::safePrint(" ---\n", fd);
-    utils::safePrint("App Name: ", fd);
-    utils::safePrint(config.appName.data(), fd);
-    utils::safePrint("\nBuild ID: ", fd);
-    utils::safePrint(config.buildID.data(), fd);
+    file.printMulti("--- FAULT REPORT v", std::string_view{version::kString}, " ---\n",
+                    "App Name: ", std::string_view{config.appName.data()},
+                    "\nBuild ID: ", std::string_view{config.buildID.data()});
     if (_internal::gInitTime.written) {
-        utils::safePrint("\nInit Timestamp: ", fd);
-        utils::safePrint(_internal::gInitTime.str.data(), fd);
+        file.printMulti("\nInit Timestamp: ", std::string_view{_internal::gInitTime.str.data()});
     }
-    utils::safePrint("\n\n", fd);
-    utils::safePrint(errContext.data(), errContext.size(), fd);
-    utils::safePrint("\n", fd);
+    file.printMulti("\n\n", errContext, '\n');
     if (customTrace.has_value()) {
         // Panic or std::terminate: Program is not inside restrictive posix signal handling.
         const auto& trace = *customTrace;
         if (trace.frames.empty()) {
-            utils::safePrint("(No object trace is present for display)\n", fd);
+            file.print("(No object trace is present for display)\n");
         } else if (writeResolved) {
             try {  // Not signal handler, safe to try/catch
                 const auto resolvedTrace = trace.resolve();
-                utils::safePrint("Stack Trace:\n", fd);
+                file.print("Stack Trace:\n");
                 for (const auto& frame : resolvedTrace) {
-                    utils::safePrint(frame.to_string().c_str(), fd);
-                    utils::safePrint("\n", fd);
+                    file.printMulti(std::string_view{frame.to_string()}, '\n');
                 }
-                utils::safePrint("(Regular resolved stacktrace used)\n", fd);
+                file.print("(Regular resolved stacktrace used)\n");
             } catch (...) {
-                utils::safePrint(
-                    "[Internal error while resolving trace. Defaulting to log unresolved trace]\n",
-                    fd);
-                utils::safePrint("Object Trace:\n", fd);
+                file.print(
+                    "[Internal error while resolving trace. Defaulting to log unresolved "
+                    "trace]\nObject Trace:\n");
                 for (const auto& frame : trace.frames) {
-                    utils::safeWriteHex(frame.raw_address, fd);
-                    utils::safePrint(" ", fd);
-                    utils::safeWriteHex(frame.object_address, fd);
-                    utils::safePrint(" ", fd);
-                    utils::safePrint(frame.object_path.c_str(), fd);
-                    utils::safePrint("\n", fd);
+                    file.printMulti(frame.raw_address, ' ', frame.object_address, ' ',
+                                    std::string_view{frame.object_path}, '\n');
                 }
-                utils::safePrint("(Regular unwind used)\n", fd);
+                file.print("(Regular unwind used)\n");
             }
         } else {
-            utils::safePrint("Object Trace:\n", fd);
+            file.print("Object Trace:\n");
             for (const auto& frame : trace.frames) {
-                utils::safeWriteHex(frame.raw_address, fd);
-                utils::safePrint(" ", fd);
-                utils::safeWriteHex(frame.object_address, fd);
-                utils::safePrint(" ", fd);
-                utils::safePrint(frame.object_path.c_str(), fd);
-                utils::safePrint("\n", fd);
+                file.printMulti(frame.raw_address, ' ', frame.object_address, ' ',
+                                std::string_view{frame.object_path}, '\n');
             }
-            utils::safePrint("(Regular unwind used)\n", fd);
+            file.print("(Regular unwind used)\n");
         }
     } else if (can_collect_safe_trace()) {
-        utils::safePrint("Object Trace:\n", fd);
+        file.print("Object Trace:\n");
         // Program may be inside restrictive signal handling (Possibly linux posix). Collect
         // stacktrace and print safely
         std::array<cpptrace::frame_ptr, 128> buffer{};
@@ -1188,34 +1240,24 @@ bool writeReport(std::string_view errContext,
         for (std::size_t i{0}; i < size; ++i) {
             cpptrace::safe_object_frame objFrame{};
             cpptrace::get_safe_object_frame(buffer[i], &objFrame);
-            utils::safePrint(objFrame, fd);
-            utils::safePrint("\n", fd);
+            file.printMulti(objFrame, '\n');
         }
-        utils::safePrint("(Safe unwind used)\n", fd);
+        file.print("(Safe unwind used)\n");
     } else if (config.useUnsafeStacktraceOnSignalFallback) {
-        utils::safePrint("Object Trace:\n", fd);
+        file.print("Object Trace:\n");
         // If the program is inside restrictive signal handling, it will attempt here to collect a
         // regular trace. This is a best-effor approach: it may throw, or deadlock, or recursively
         // crash. Fault mitigates this with prior alarms and protection agains recursion
         const auto objectTrace = cpptrace::generate_object_trace();
         for (const cpptrace::object_frame& frame : objectTrace) {
-            utils::safeWriteHex(frame.raw_address, fd);
-            utils::safePrint(" ", fd);
-            utils::safeWriteHex(frame.object_address, fd);
-            utils::safePrint(" ", fd);
-            utils::safePrint(frame.object_path.c_str(), fd);
-            utils::safePrint("\n", fd);
+            file.printMulti(frame.raw_address, ' ', frame.object_address, ' ',
+                            std::string_view{frame.object_path}, '\n');
         }
-        utils::safePrint("(Regular unwind used)\n", fd);
+        file.print("(Regular unwind used)\n");
     } else {
-        utils::safePrint(
-            "Could not safely generate object trace (regular generation flag not activated)\n", fd);
+        file.print(
+            "Could not safely generate object trace (regular generation flag not activated)\n");
     }
-#ifdef __linux__
-    ::close(fd);
-#else
-    ::CloseHandle(fd);
-#endif
     return true;
 }
 
@@ -1337,7 +1379,7 @@ struct WindowsHandling {
     static inline ::HANDLE hCrashEvent{nullptr};
     static inline ::HANDLE hWatchdogThread{nullptr};
     static constexpr ::DWORD kTimerMilliseconds{
-        static_cast<::DWORD>(_internal::Config::kAlarmSeconds * 1000)};
+        static_cast< ::DWORD>(_internal::Config::kAlarmSeconds * 1000)};
 
     static void popUpAction(bool exitAftewards = false) noexcept {
         bool expected{false};
@@ -1394,16 +1436,11 @@ struct WindowsHandling {
     }
 
     static bool writeMiniDump(const ::PEXCEPTION_POINTERS exceptionPtrs = nullptr) noexcept {
-        std::array<wchar_t, _internal::Config::Windows::dumpPath.size()> dumpPathW{};
-        const ::HANDLE hFile = utils::utf8ToUtf16Stack(_internal::Config::Windows::dumpPath.data(),
-                                                       dumpPathW.data(), dumpPathW.size())
-                                   ? ::CreateFileW(dumpPathW.data(), GENERIC_WRITE, 0, nullptr,
-                                                   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr)
-                                   : INVALID_HANDLE_VALUE;
-        if (hFile == INVALID_HANDLE_VALUE) {
+        auto file = utils::File::makeFile<_internal::Config::kCrashPathSize>(
+            std::string_view{_internal::Config::Windows::dumpPath.data()});
+        if (file.invalid()) {
             return false;
         }
-
         ::MINIDUMP_EXCEPTION_INFORMATION mei;
         ::MINIDUMP_EXCEPTION_INFORMATION* pMei{nullptr};
 
@@ -1414,11 +1451,9 @@ struct WindowsHandling {
             pMei = &mei;
         }
 
-        const auto res = ::MiniDumpWriteDump(::GetCurrentProcess(), ::GetCurrentProcessId(), hFile,
-                                             MiniDumpNormal, pMei, nullptr, nullptr);
-
-        ::CloseHandle(hFile);
-
+        const auto res =
+            ::MiniDumpWriteDump(::GetCurrentProcess(), ::GetCurrentProcessId(), file.getHandle(),
+                                MiniDumpNormal, pMei, nullptr, nullptr);
         return res != 0;
     }
 
@@ -1440,8 +1475,9 @@ struct WindowsHandling {
                 stdErrBfr.append("\nCould not generate report.");
             }
             if (WindowsHandling::wasDumpWritten) {
-                stdErrBfr.appendMulti("\nMini dump generated at: ",
-                                      _internal::Config::Windows::dumpPath.data());
+                stdErrBfr.appendMulti(
+                    "\nMini dump generated at: ",
+                    std::string_view{_internal::Config::Windows::dumpPath.data()});
             }
             stdErrBfr.append("\n--- FAULT END ---\n");
             ExitHandler::writeToStdErr(std::string_view{stdErrBfr});
@@ -1593,7 +1629,7 @@ struct WindowsHandling {
 
 #else
 
-inline const char* safePrintSiCode(int sig, int code) noexcept {
+inline std::string_view safePrintSiCode(int sig, int code) noexcept {
     switch (sig) {
         case SIGSEGV:
             switch (code) {
@@ -1742,7 +1778,7 @@ bool findProgramInPath(std::string_view programName, char* outBuffer,
 }
 
 struct LinuxHandling {
-    static_assert(std::atomic<::pid_t>::is_always_lock_free,
+    static_assert(std::atomic< ::pid_t>::is_always_lock_free,
                   "std::atomic<pid_t> may not be lock free. Remove std::atomic from it.");
 
     static inline ::stack_t gAltstack{};
@@ -1751,7 +1787,7 @@ struct LinuxHandling {
     static inline utils::InlineString<128> titleBuffer{};
     static inline utils::InlineString<2048> finalBuffer{};
     static inline std::size_t offsetForMsg{0};
-    static inline std::atomic<::pid_t> tracePid{-1};
+    static inline std::atomic< ::pid_t> tracePid{-1};
     static inline std::atomic<bool> hasAnySignalBeenReceived{false};
     static thread_local inline std::sig_atomic_t tryCount{};
     static inline std::sig_atomic_t signal{-1};
@@ -1852,10 +1888,7 @@ struct LinuxHandling {
         if (info != nullptr) {
             LinuxHandling::finalBuffer.appendMulti(
                 "Reason: ", safePrintSiCode(LinuxHandling::signal, info->si_code),
-                "\nFault address: ");
-            std::array<char, 18> addrBuff{};
-            utils::safeWriteHex(reinterpret_cast<std::uintptr_t>(info->si_addr), addrBuff);
-            LinuxHandling::finalBuffer.appendMulti(std::span{addrBuff}, "\n\n");
+                "\nFault address: ", reinterpret_cast<std::uintptr_t>(info->si_addr), "\n\n");
         }
         utils::writePreciseTimeSafe(LinuxHandling::finalBuffer.span(),
                                     _internal::gInitTime.str.data(), _internal::gInitTime.tvSec,
@@ -2324,7 +2357,7 @@ MAYBE_INLINED_NAMESPACE_V1 {
 
     ::FaultInitResultV1 fromCppInitResult(InitResult cppRes) noexcept {
         return ::FaultInitResultV1{.success = cppRes.success,
-                                   .warnings = static_cast<::FaultConfigWarningV1>(
+                                   .warnings = static_cast< ::FaultConfigWarningV1>(
                                        static_cast<std::uint8_t>(cppRes.warnings))};
     }
 
