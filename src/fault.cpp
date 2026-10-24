@@ -218,9 +218,7 @@ struct File : public OutputSource {
     {
     }
 
-#ifdef _WIN32
     template <std::size_t WidePathN>
-#endif
     static File makeFile(std::string_view path) {
 #ifdef __linux__
         return File{path};
@@ -2077,6 +2075,8 @@ struct TerminateHandling {
         bool showPopUp{true};
     };
 
+    enum class Type : std::uint8_t { kStdTerminate, kPanic };
+
    private:
     static inline std::atomic<bool> hasBeenTriggered{
         false};  // Protection against multi threading calling std::terminate concurrently
@@ -2091,7 +2091,7 @@ struct TerminateHandling {
     }
 
     static void retrieveCurrentException(utils::InlineStringSpan msg,
-                                         utils::InlineStringSpan detail) noexcept {
+                                         utils::InlineStringSpan detail, Type type) noexcept {
 #if FAULT_EXCEPTIONS
         try {
             const std::exception_ptr exPtr =
@@ -2100,20 +2100,40 @@ struct TerminateHandling {
             if (exPtr) {
                 std::rethrow_exception(exPtr);
             }
+            if (type != Type::kStdTerminate) {
+                return;  // Having exception as part of panic call is absolutely optional, redundant
+                         // to inform user
+            }
             msg.append("Terminate called.");
             detail.append("Terminate was reached without an active exception.\n");
         } catch (const std::exception& e) {
-            msg.appendFmt("Terminate called due to an unhandled exception: {}.", e.what());
-            detail.appendFmt(
-                "Terminate called due to an unhandled exception.\n"
-                "Type (mangled): {}\nMessage: {}\n",
-                typeid(e).name(), e.what());
+            if (type == Type::kStdTerminate) {
+                msg.appendFmt("Terminate called due to an unhandled exception: {}.", e.what());
+                detail.appendFmt(
+                    "Terminate called due to an unhandled exception.\n"
+                    "Type (mangled): {}\nMessage: {}\n",
+                    typeid(e).name(), e.what());
+            } else {
+                detail.appendFmt(
+                    "A handled exception was identified during this panic call.\n"
+                    "Type (mangled): {}\nMessage: {}\n",
+                    typeid(e).name(), e.what());
+            }
         } catch (...) {
-            msg.append("Terminate called due to an unhandled exception.");
-            detail.append(
-                "Terminate called due to an unhandled exception of non-std::exception type.\n");
+            if (type == Type::kStdTerminate) {
+                msg.append("Terminate called due to an unhandled exception.");
+                detail.append(
+                    "Terminate called due to an unhandled exception of non-std::exception type.\n");
+            } else {
+                detail.append(
+                    "A handled exception was present during this panic call, of non-std::exception "
+                    "type\n");
+            }
         }
 #else
+        if (type != Type::kStdTerminate) {
+            return;
+        }
         msg.append("Terminate called.");
         detail.append(
             "Terminate was reached. Exception type cannot be retrieved (Given 'No "
@@ -2262,8 +2282,6 @@ struct TerminateHandling {
     }
 
    public:
-    enum class Type : std::uint8_t { kStdTerminate, kPanic };
-
     static void terminateImpl(std::optional<std::string_view> startMsg, Type type,
                               const Settings& settings,
                               const std::optional<v1::ObjectTrace>& customTrace) noexcept {
@@ -2281,9 +2299,7 @@ struct TerminateHandling {
             }
         }
         auto cppObjTrace = TerminateHandling::retrieveTraceWithMsg(details.span(), customTrace);
-        if (type == Type::kStdTerminate) {
-            TerminateHandling::retrieveCurrentException(userMsg.span(), details.span());
-        }
+        TerminateHandling::retrieveCurrentException(userMsg.span(), details.span(), type);
         TerminateHandling::checkCommonExceptions(userMsg.span(), details.span(), cppObjTrace);
         if (type == Type::kStdTerminate) {
             TerminateHandling::runTerminateHook(userMsg.span(), details.span(), cppObjTrace);
