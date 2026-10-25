@@ -22,7 +22,7 @@ IncludeCategories:
   - Regex: '^<[^/.]*.h>$'
     Priority: 1
 
-  - Regex: '^["<](cpptrace)'
+  - Regex: '^["<](cpptrace|boost)'
     Priority: 3
 
   - Regex: '^["<]fault/'

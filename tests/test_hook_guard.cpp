@@ -18,9 +18,9 @@ void processFile() {
 }
 
 void bar() {
-    fault::UnwindGuardAt hook{[] -> std::string { return "Entered bar..."; }};
+    fault::UnwindGuardAt hook{[]() -> std::string { return "Entered bar..."; }};
 
-    FAULT_DEBUG_FAIL([] -> std::string { return "Calling processFile..."; });
+    FAULT_DEBUG_FAIL([]() -> std::string { return "Calling processFile..."; });
     processFile();
 }
 
@@ -28,7 +28,7 @@ void foo() {
     fault::FailGuardAt guard{[]() -> std::string { return "Fail guard, with location"; },
                              fault::HookScope::kThreadLocal};
     fault::UnwindGuardAt guard2{[]() -> std::string { return "Unwind guard, with location"; }};
-    fault::PanicGuard hook{[] -> std::string { return "Calling bar..."; },
+    fault::PanicGuard hook{[]() -> std::string { return "Calling bar..."; },
                            fault::HookScope::kGlobal};
     bar();
 }
@@ -45,7 +45,7 @@ int main() {
         std::cerr << "Failed to initialize fault.\n";
         return EXIT_FAILURE;
     }
-    fault::FailGuardAt hook{[] -> std::string { return "Fault guard with location"; },
+    fault::FailGuardAt hook{[]() -> std::string { return "Fault guard with location"; },
                             fault::HookScope::kGlobal};
     FAULT_DEBUG_GUARD_AT([]() -> std::string { return "Entering try/catch"; });
     try {

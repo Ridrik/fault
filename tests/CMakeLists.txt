@@ -12,11 +12,6 @@ function(add_test_executable name source_file)
         target_link_libraries(${name} PRIVATE fault::fault)
     endif()
 
-    target_compile_options(${name} PRIVATE
-        $<$<CXX_COMPILER_ID:GNU>:-w>
-        $<$<CXX_COMPILER_ID:Clang>:-w>
-        $<$<CXX_COMPILER_ID:MSVC>:/w>
-    )
     set_target_properties(${name} PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     if(WIN32)
         add_custom_command(TARGET ${name} POST_BUILD
@@ -57,6 +52,12 @@ target_compile_definitions(crash_target PRIVATE
     CRASH_REPORT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/crash"
 )
 
+target_compile_options(crash_target PRIVATE
+    $<$<CXX_COMPILER_ID:GNU>:-w>
+    $<$<CXX_COMPILER_ID:Clang>:-w>
+    $<$<CXX_COMPILER_ID:MSVC>:/w>
+)
+
 # ====== Master ======
 add_executable(crash_master crash_master.cpp)
 target_compile_features(crash_master PRIVATE cxx_std_20)
@@ -65,11 +66,6 @@ if(WIN32)
 endif()
 target_link_libraries(crash_master PRIVATE fault::fault Boost::unit_test_framework Boost::filesystem Boost::process)
 target_compile_features(crash_master PRIVATE cxx_std_20)
-target_compile_options(crash_master PRIVATE
-    $<$<CXX_COMPILER_ID:GNU>:-w>
-    $<$<CXX_COMPILER_ID:Clang>:-w>
-    $<$<CXX_COMPILER_ID:MSVC>:/w>
-)
 target_compile_definitions(crash_master PRIVATE 
     CRASH_TARGET_PATH="$<TARGET_FILE:crash_target>"
     CRASH_REPORT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/crash"

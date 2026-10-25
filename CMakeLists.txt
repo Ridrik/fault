@@ -130,6 +130,16 @@ if(ALL_CXX_FLAGS MATCHES "-fno-exceptions" OR ALL_CXX_FLAGS MATCHES "/EHs-")
                            "Disabling them may lead to loss of information during termination handling. Consider enabling exceptions for this library target")
 endif()
 
+if (${PROJECT_IS_TOP_LEVEL}) 
+
+target_compile_options(fault PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
+endif()
+
 option(FAULT_INSTALL "Generate install rules for fault" ${PROJECT_IS_TOP_LEVEL})
 
 if(FAULT_INSTALL)

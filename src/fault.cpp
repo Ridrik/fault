@@ -104,7 +104,7 @@ struct OutputSource {
    public:
 #ifdef __linux__
     using descriptor = int;
-    static constexpr descriptor stdErrFD = STDERR_FILENO;
+    static constexpr descriptor stdErrFD = STDERR_FILENO;  // NOLINT(readability-identifier-naming)
 #else
     using descriptor = ::HANDLE;
 #endif
@@ -425,7 +425,7 @@ struct InlineStringSpan {
 
     template <std::size_t N>
     InlineStringSpan(InlineString<N>& str)
-        : data_{str.data_.data(), str.data_.size()}, size_{std::ref(str.size_)} {}
+        : data_{str.getData(), str.getCapacity()}, size_{std::ref(str.size_)} {}
 
     [[nodiscard]] constexpr auto getCapacity() const noexcept {
         return data_.size();
@@ -822,45 +822,49 @@ void rethrowAndAppendSavedExceptionTrace(std::optional<cpptrace::object_trace>& 
     try {
         std::rethrow_exception(pendingException);
     } catch (TracedException& e) {
-        auto savedTrace = std::move(e).getTrace();
-        const auto exTypeStr = std::move(e).getExceptionStringType();
-        if (savedTrace.has_value()) {
-            if (!baseTrace.has_value()) {
-                baseTrace = cpptrace::object_trace{};
+        try {
+            auto savedTrace = std::move(e).getTrace();
+            const auto exTypeStr = std::move(e).getExceptionStringType();
+            if (savedTrace.has_value()) {
+                if (!baseTrace.has_value()) {
+                    baseTrace = cpptrace::object_trace{};
+                }
+                baseTrace->frames.push_back({.raw_address = 0,
+                                             .object_address = 0,
+                                             .object_path = {"====== PROPAGATED ======"}});
+                baseTrace->frames.insert(baseTrace->frames.end(),
+                                         std::make_move_iterator(savedTrace->frames.begin()),
+                                         std::make_move_iterator(savedTrace->frames.end()));
             }
-            baseTrace->frames.push_back({.raw_address = 0,
-                                         .object_address = 0,
-                                         .object_path = {"====== PROPAGATED ======"}});
-            baseTrace->frames.insert(baseTrace->frames.end(),
-                                     std::make_move_iterator(savedTrace->frames.begin()),
-                                     std::make_move_iterator(savedTrace->frames.end()));
-        }
-        const auto& str = std::move(e).str();
-        utils::InlineString<128> optExTypeStr;
-        if (exTypeStr.has_value()) {
-            optExTypeStr.appendFmt(", of (mangled) type {}.", *exTypeStr);
-        } else {
-            optExTypeStr += '.';
-        }
-        if (str.empty()) {
-            msg.append("\nPropagated from upstream exception.");
-            details.appendFmt(
-                "A saved exception was retrieved with no message "
-                "provided{}\nIt should be "
-                "visible in "
-                "the object/stack trace, under the delimiter '====== "
-                "PROPAGATED ======' "
-                "artifitial frame.\n",
-                std::string_view{optExTypeStr});
-        } else {
-            msg.appendFmt("\nPropagated from upstream exception: {}.", str);
-            details.appendFmt(
-                "A saved exception was retrieved with message: {}{}\nIt should "
-                "be visible in "
-                "the object/stack trace, under the delimiter '====== "
-                "PROPAGATED ======' "
-                "artifitial frame.\n",
-                str, std::string_view{optExTypeStr});
+            const auto& str = std::move(e).str();
+            utils::InlineString<128> optExTypeStr;
+            if (exTypeStr.has_value()) {
+                optExTypeStr.appendFmt(", of (mangled) type {}.", *exTypeStr);
+            } else {
+                optExTypeStr += '.';
+            }
+            if (str.empty()) {
+                msg.append("\nPropagated from upstream exception.");
+                details.appendFmt(
+                    "A saved exception was retrieved with no message "
+                    "provided{}\nIt should be "
+                    "visible in "
+                    "the object/stack trace, under the delimiter '====== "
+                    "PROPAGATED ======' "
+                    "artifitial frame.\n",
+                    std::string_view{optExTypeStr});
+            } else {
+                msg.appendFmt("\nPropagated from upstream exception: {}.", str);
+                details.appendFmt(
+                    "A saved exception was retrieved with message: {}{}\nIt should "
+                    "be visible in "
+                    "the object/stack trace, under the delimiter '====== "
+                    "PROPAGATED ======' "
+                    "artifitial frame.\n",
+                    str, std::string_view{optExTypeStr});
+            }
+        } catch (...) {
+            details.append("* Internal Error while appending saved exception trace *\n");
         }
     }
 }
@@ -1048,10 +1052,12 @@ struct Config {
         bool showPopUp{true};
         bool writeReport{true};
     };
+#ifdef _WIN32
     struct Windows {
         static inline bool canWriteDump{false};
         static inline std::array<char, 512> dumpPath{"crash_dump.dmp"};
     };
+#endif
     std::array<char, 512> baseErrorMessage{
         "The application encountered a fatal error and must close. If the problem persists, please "
         "contact the program maintainer."};
