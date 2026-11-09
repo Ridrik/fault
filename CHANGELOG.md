@@ -1,3 +1,7 @@
+## v0.5.3 - November 2026
+### Updated
+- Added exception type report information on saved exceptions.
+
 ## v0.5.2 - October 2026
 ### Updated
 - Changed trace signature, prefering std::optional over trace pointer. This is an API change on the functions and data members that make reference to a trace
